@@ -1,0 +1,8 @@
+// `param` as lexical scope over later statements (MVP: lowered via nested lambda).
+
+def andIntroWithParam : (Sort 0) = synth do {
+  param A : (Sort 0)
+  param B : (Sort 0)
+  yield (Ctor Pair (Var A) (Var B))
+}
+

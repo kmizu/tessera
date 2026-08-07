@@ -1,0 +1,13 @@
+// Placeholder for explicit `Synth` API examples.
+// The MVP currently supports only term-level declarations and `synth do`.
+// Once explicit combinators (fn/map/flatMap/choose/use/label...) are added,
+// this file should demonstrate an explicit-style equivalent to:
+//
+// meta def andIntroExplicit[A: Prop, B: Prop]: Synth[A => B => And[A, B]] = ...
+
+def andIntroExplicit : (Sort 0) = synth do {
+  param A : (Sort 0)
+  param B : (Sort 0)
+  yield (Ctor Pair (Var A) (Var B))
+}
+

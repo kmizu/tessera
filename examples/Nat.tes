@@ -1,0 +1,8 @@
+// Nat terms using constructor notation.
+// Full recursor and arithmetic are still future work.
+
+def natZero = (Ctor NatZero)
+def natOne = (Ctor NatSucc (Ctor NatZero))
+def natTwo = (Ctor NatSucc (Ctor NatSucc (Ctor NatZero)))
+def addZeroRight = (Lam x (Sort 0) (Var x))
+

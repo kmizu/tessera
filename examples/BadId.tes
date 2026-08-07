@@ -1,0 +1,2 @@
+def badId : (Pi A (Sort 0) (Pi x (Var A) (Sort 1))) = (Lam A (Sort 0) (Lam x (Var A) (Var x)))
+

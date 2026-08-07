@@ -1,0 +1,6 @@
+// Failure-shape example while explicit failure reporting is still being built.
+// Keep this declaration as a hole to show `holes` output and `#eval` fallback.
+
+def expectedFail : (Sort 0) = ?missing : (Sort 1)
+def stillCompiles = (Ctor Unit)
+

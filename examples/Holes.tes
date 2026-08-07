@@ -1,0 +1,5 @@
+// Unresolved-hole examples for #holes inspection.
+
+def unresolved = ?goal
+def unresolvedWithType : (Sort 0) = ?typed : (Sort 0)
+

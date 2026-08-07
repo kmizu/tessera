@@ -1,0 +1,11 @@
+// Branching (`choose` / multi-path) is a future phase feature.
+// Current parser supports only sequential declaration blocks, so this file
+// keeps an explicit placeholder alongside a `synth do` equivalent that
+// is already supported.
+
+def andIntroBranch : (Sort 0) = synth do {
+  param A : (Sort 0)
+  param B : (Sort 0)
+  yield (Ctor Pair (Var A) (Var B))
+}
+

@@ -1,0 +1,14 @@
+# sbt / Scala build artifacts
+/.bsp/
+/.idea/
+/.metals/
+/.vscode/
+/.bloop/
+/.scala-build/
+/project/target/
+/target/
+
+# local runtime/tooling dirs that may appear in workspace
+/.sbt_boot/
+/.sbt_global/
+/.DS_Store

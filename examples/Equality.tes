@@ -1,0 +1,5 @@
+// Equality placeholders for the current MVP surface.
+
+def reflLike = (Lam x (Sort 0) (Ctor Refl (Var x)))
+def transportLike = (Lam p (Sort 0) (Lam h (Sort 1) (Var h)))
+

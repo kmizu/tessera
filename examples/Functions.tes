@@ -1,0 +1,6 @@
+// Basic term-level function shapes.
+// Parser and core are currently limited to lambda + application + constructor forms.
+
+def id = (Lam x (Sort 0) (Var x))
+def k = (Lam x (Sort 0) (Lam y (Sort 0) (Var x)))
+def applyTwice = (Lam f (Sort 0) (Lam x (Sort 0) (App (App (Var f) (Var x)) (Var x))))

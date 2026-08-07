@@ -1,0 +1,6 @@
+// Product/sum-style constructors (syntax placeholders while data-types are still evolving).
+
+def andLike = (Ctor Pair (Sort 0) (Sort 1))
+def left = (Ctor Left (Sort 0))
+def right = (Ctor Right (Sort 1))
+
