@@ -101,15 +101,19 @@ class CommandsTest extends FunSuite:
       TesseraCli.main(Array("eval", "--trace", path.toString, "id"))
     }
 
-    assert(output.contains("eval trace:\n"))
-    assert(output.contains(s"  file: $path\n"))
-    assert(output.contains("  target: id\n"))
-    assert(output.contains("  kind: declaration\n"))
-    assert(output.contains("  parsed: (lambda A: Type[0] =>"))
-    assert(output.contains("  core: (lambda A: Type[0] =>"))
-    assert(output.contains("  expected: (A: Type[0]) -> (x: A) -> A\n"))
-    assert(output.contains("  kernel: OK\n"))
-    assert(output.contains("  normalized: (lambda A: Type[0] =>"))
+    assertEquals(
+      output,
+      s"""eval trace:
+         |  file: $path
+         |  target: id
+         |  kind: declaration
+         |  parsed: (lambda A: Type[0] => (lambda x: A => x))
+         |  core: (lambda A: Type[0] => (lambda x: A => x))
+         |  expected: (A: Type[0]) -> (x: A) -> A
+         |  kernel: OK
+         |  normalized: (lambda A: Type[0] => (lambda x: A => x))
+         |""".stripMargin
+    )
   }
 
   test("eval trace labels inline normalization as unchecked") {
@@ -136,6 +140,28 @@ class CommandsTest extends FunSuite:
     assert(output.contains("  inferred: unavailable: cannot infer type of lambda parameter `x`\n"))
     assert(output.contains("  kernel: not checked\n"))
     assert(output.contains("  normalized (unchecked): (lambda x: Type[0] => x)\n"))
+  }
+
+  test("eval trace keeps an unannotated declaration distinct from an inline expression") {
+    val path = writeExample("def id = (Lam x (Sort 0) (Var x))")
+    val output = withCapturedOut {
+      TesseraCli.main(Array("eval", "--trace", path.toString, "id"))
+    }
+
+    assertEquals(
+      output,
+      s"""eval trace:
+         |  file: $path
+         |  target: id
+         |  kind: declaration
+         |  parsed: (lambda x: Type[0] => x)
+         |  core: (lambda x: Type[0] => x)
+         |  expected: <none>
+         |  inferred: unavailable: cannot infer type of lambda parameter `x`
+         |  kernel: not checked
+         |  normalized (unchecked): (lambda x: Type[0] => x)
+         |""".stripMargin
+    )
   }
 
   test("eval trace stops after kernel rejection") {
@@ -169,8 +195,13 @@ class CommandsTest extends FunSuite:
   }
 
   test("eval trace prints dedicated usage when arguments are missing") {
-    val output = withCapturedOut {
+    val missingFile = withCapturedOut {
       TesseraCli.main(Array("eval", "--trace"))
     }
-    assertEquals(output, "usage: tessera eval --trace <file.tes> <decl or expression>\n")
+    val missingTarget = withCapturedOut {
+      TesseraCli.main(Array("eval", "--trace", "examples/Identity.tes"))
+    }
+    val expected = "usage: tessera eval --trace <file.tes> <decl or expression>\n"
+    assertEquals(missingFile, expected)
+    assertEquals(missingTarget, expected)
   }
