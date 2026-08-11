@@ -21,6 +21,7 @@ Run a sample declaration file:
 ```bash
 sbt "runMain tessera.Main check examples/Identity.tes"
 sbt "runMain tessera.Main eval examples/Identity.tes id"
+sbt "runMain tessera.Main eval --trace examples/Identity.tes id"
 ```
 
 You can also try the new `synth do` sugar example:
@@ -34,6 +35,7 @@ sbt "runMain tessera.Main show-desugared examples/AndIntro.tes andIntro"
 ```bash
 sbt "runMain tessera.Main check examples/Identity.tes"
 sbt "runMain tessera.Main eval examples/Identity.tes id"
+sbt "runMain tessera.Main eval --trace examples/Identity.tes id"
 sbt "runMain tessera.Main show-term examples/Identity.tes id"
 sbt "runMain tessera.Main show-core examples/Identity.tes"
 sbt "runMain tessera.Main show-synth examples/Identity.tes id"
@@ -64,6 +66,7 @@ Implemented in this slice:
 - `sbt test`
 - `sbt "runMain tessera.Main check <file.tes>"`
 - `sbt "runMain tessera.Main eval <file.tes> <decl or expression>"`
+- `sbt "runMain tessera.Main eval --trace <file.tes> <decl or expression>"`
 - `sbt "runMain tessera.Main show-term <file.tes> [decl]"`
 - `sbt "runMain tessera.Main show-core <file.tes> [decl]"`
 - `sbt "runMain tessera.Main show-synth <file.tes> [decl]"`

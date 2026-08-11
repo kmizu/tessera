@@ -18,7 +18,7 @@
 - [x] CLI wire-up for `show-core`, `show-synth`, `show-desugared`, `trace-synth`
 - [x] `holes` command collects and prints unresolved holes in core declarations
 - [x] `eval` command evaluates a declaration or a one-shot term and prints normalized core
-- [ ] full `eval` structured trace format
+- [x] structured `eval --trace` output for parse, elaboration, kernel, and normalization stages
 - [x] architecture-layer checks (kernel/core/meta import isolation via tests)
 - [x] Example corpus under `examples/` (MVP-compatible declarations; advanced forms as annotated placeholders)
 - [ ] LSP tooling
