@@ -112,6 +112,20 @@ class ParserTest extends FunSuite:
     )
   }
 
+  test("parser rejects a trailing tuple comma") {
+    val result = SimpleSyntaxParser.parseTermFromSource("(A,)")
+    assert(result.isLeft)
+    assert(result.fold(_.message.contains("expected tuple element after ','"), _ => false))
+  }
+
+  test("parser rejects tuple arity greater than ten") {
+    val result = SimpleSyntaxParser.parseTermFromSource(
+      "(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11)"
+    )
+    assert(result.isLeft)
+    assert(result.fold(_.message.contains("maximum 10"), _ => false))
+  }
+
   test("parser supports for-do as synth-do alias") {
     val source =
       """

@@ -8,6 +8,8 @@ import tessera.core.Term
 import Term.*
 
 object SimpleSyntaxParser:
+  private val MaxTupleArity = 10
+
   sealed trait ParseError:
     def message: String
     def position: Int
@@ -294,7 +296,7 @@ object SimpleSyntaxParser:
     skipWhitespaceLike(cursor)
     cursor.peekOption match
       case Some(RParen) =>
-        Left(UnexpectedToken("unexpected ')' while parsing tuple element", cursor.pos))
+        Left(UnexpectedToken("expected tuple element after ','", cursor.pos))
       case None =>
         Left(UnexpectedEof(cursor.pos))
       case _ =>
@@ -302,6 +304,8 @@ object SimpleSyntaxParser:
           val collected = elements :+ element
           skipWhitespaceLike(cursor)
           cursor.peekOption match
+            case Some(Comma) if collected.size >= MaxTupleArity =>
+              Left(UnexpectedToken(s"tuple arity exceeds maximum $MaxTupleArity", cursor.pos))
             case Some(Comma) =>
               cursor.next()
               parseTupleTail(cursor, collected)
