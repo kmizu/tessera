@@ -190,57 +190,64 @@ object SimpleSyntaxParser:
           case None => Left(UnexpectedEof(cursor.pos))
           case Some(tok) =>
             tok match
+              case LParen =>
+                cursor.unconsume(LParen)
+                parseTerm(cursor).flatMap(term => finishParenthesized(cursor, term))
               case Word("Sort") =>
                 for
                   level <- expectNumber(cursor)
-                  _ <- expectRParen(cursor)
-                yield Sort(level)
+                  term <- finishParenthesized(cursor, Sort(level))
+                yield term
               case Word("Var") =>
                 for
                   name <- expectIdentifier(cursor)
-                  _ <- expectRParen(cursor)
-                yield Var(name)
+                  term <- finishParenthesized(cursor, Var(name))
+                yield term
               case Word("Builtin") =>
                 for
                   name <- expectIdentifier(cursor)
-                  _ <- expectRParen(cursor)
-                yield Builtin(name)
+                  term <- finishParenthesized(cursor, Builtin(name))
+                yield term
               case Word("Pi") =>
                 for
                   name <- expectIdentifier(cursor)
                   domain <- parseTerm(cursor)
                   codomain <- parseTerm(cursor)
-                  _ <- expectRParen(cursor)
-                yield Pi(name, domain, codomain)
+                  term <- finishParenthesized(cursor, Pi(name, domain, codomain))
+                yield term
               case Word("Lam") =>
                 for
                   name <- expectIdentifier(cursor)
                   paramType <- parseTerm(cursor)
                   body <- parseTerm(cursor)
-                  _ <- expectRParen(cursor)
-                yield Lambda(name, paramType, body)
+                  term <- finishParenthesized(cursor, Lambda(name, paramType, body))
+                yield term
               case Word("App") =>
                 for
                   fn <- parseTerm(cursor)
                   arg <- parseTerm(cursor)
-                  _ <- expectRParen(cursor)
-                yield App(fn, arg)
+                  term <- finishParenthesized(cursor, App(fn, arg))
+                yield term
               case Word("Let") =>
                 for
                   name <- expectIdentifier(cursor)
                   valueType <- parseTerm(cursor)
                   value <- parseTerm(cursor)
                   body <- parseTerm(cursor)
-                  _ <- expectRParen(cursor)
-                yield Let(name, valueType, value, body)
+                  term <- finishParenthesized(cursor, Let(name, valueType, value, body))
+                yield term
               case Word("Ctor") =>
                 for
                   name <- expectIdentifier(cursor)
-                  args <- parseRepeatTerm(cursor, isEndOfCompound)
-                  _ <- expectRParen(cursor)
-                yield Constructor(name, args)
+                  args <- parseRepeatTerm(cursor, isEndOfCompoundOrTuple)
+                  term <- finishParenthesized(cursor, Constructor(name, args))
+                yield term
               case Word("Unit") =>
-                expectRParen(cursor).map(_ => Constructor("Unit", Nil))
+                finishParenthesized(cursor, Constructor("Unit", Nil))
+              case Number(value) =>
+                finishParenthesized(cursor, Term.Sort(value))
+              case Word(name) =>
+                finishParenthesized(cursor, Term.Var(name))
               case _ =>
                 Left(UnexpectedToken(s"unknown term form $tok", cursor.pos))
       case Some(Word("Sort")) =>
@@ -265,6 +272,47 @@ object SimpleSyntaxParser:
         Left(UnexpectedToken("unexpected ')' while parsing term", cursor.pos))
       case Some(tok) =>
         Left(UnexpectedToken(s"unexpected token $tok", cursor.pos))
+
+  private def finishParenthesized(cursor: Cursor, first: Term): Either[ParseError, Term] =
+    skipWhitespaceLike(cursor)
+    cursor.peekOption match
+      case Some(Comma) =>
+        cursor.next()
+        parseTupleTail(cursor, Vector(first))
+      case Some(RParen) =>
+        cursor.next()
+        Right(first)
+      case Some(tok) =>
+        Left(UnexpectedToken(s"expected ',' or ')' after term, found $tok", cursor.pos))
+      case None =>
+        Left(UnexpectedEof(cursor.pos))
+
+  private def parseTupleTail(
+    cursor: Cursor,
+    elements: Vector[Term]
+  ): Either[ParseError, Term] =
+    skipWhitespaceLike(cursor)
+    cursor.peekOption match
+      case Some(RParen) =>
+        Left(UnexpectedToken("unexpected ')' while parsing tuple element", cursor.pos))
+      case None =>
+        Left(UnexpectedEof(cursor.pos))
+      case _ =>
+        parseTerm(cursor).flatMap { element =>
+          val collected = elements :+ element
+          skipWhitespaceLike(cursor)
+          cursor.peekOption match
+            case Some(Comma) =>
+              cursor.next()
+              parseTupleTail(cursor, collected)
+            case Some(RParen) =>
+              cursor.next()
+              Right(Constructor(s"Tuple${collected.size}", collected.toList))
+            case Some(tok) =>
+              Left(UnexpectedToken(s"expected ',' or ')' after tuple element, found $tok", cursor.pos))
+            case None =>
+              Left(UnexpectedEof(cursor.pos))
+        }
 
   private def parseHoleAnnotation(cursor: Cursor, name: String): Either[ParseError, Term] =
     skipWhitespaceLike(cursor)
@@ -342,8 +390,8 @@ object SimpleSyntaxParser:
     while cursor.peekOption.contains(WhitespaceLike) do
       cursor.next()
 
-  private def isEndOfCompound(cursor: Cursor): Boolean =
-    cursor.peekOption.contains(RParen)
+  private def isEndOfCompoundOrTuple(cursor: Cursor): Boolean =
+    cursor.peekOption.exists(tok => tok == RParen || tok == Comma)
 
   private def tokenize(source: String): Vector[Token] =
     val b = Vector.newBuilder[Token]
@@ -370,6 +418,9 @@ object SimpleSyntaxParser:
           index += 1
         case ':' =>
           b += Colon
+          index += 1
+        case ',' =>
+          b += Comma
           index += 1
         case '=' =>
           b += Equals
@@ -413,6 +464,7 @@ object SimpleSyntaxParser:
   private case object Equals extends Token
   private case object Arrow extends Token
   private case object ArrowLeft extends Token
+  private case object Comma extends Token
   private final case class Word(value: String) extends Token
   private final case class Number(value: Int) extends Token
 

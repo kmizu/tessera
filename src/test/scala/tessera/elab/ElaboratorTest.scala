@@ -12,7 +12,7 @@ class ElaboratorTest extends FunSuite:
       def andIntro : (Sort 0) = synth do {
         param A : (Sort 0)
         param B : (Sort 0)
-        yield (Ctor Pair (Var A) (Var B))
+        yield (A, B)
       }
       """
 
@@ -25,7 +25,7 @@ class ElaboratorTest extends FunSuite:
       Lambda(
         "A",
         Sort(0),
-        Lambda("B", Sort(0), Constructor("Pair", List(Var("A"), Var("B"))))
+        Lambda("B", Sort(0), Constructor("Tuple2", List(Var("A"), Var("B"))))
       )
     )
   }

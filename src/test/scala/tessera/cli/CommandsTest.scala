@@ -25,7 +25,7 @@ class CommandsTest extends FunSuite:
       """def andIntro : (Sort 0) = synth do {
         |  param A : (Sort 0)
         |  param B : (Sort 0)
-        |  yield (Ctor Pair (Var A) (Var B))
+        |  yield (A, B, A)
         |}""".stripMargin
     )
 
@@ -34,14 +34,14 @@ class CommandsTest extends FunSuite:
     }
     assert(showSynthOutput.contains("synth do {"))
     assert(showSynthOutput.contains("param A : Type[0]"))
-    assert(showSynthOutput.contains("yield Pair(A, B)"))
+    assert(showSynthOutput.contains("yield Tuple3(A, B, A)"))
 
     val showDesugaredOutput = withCapturedOut {
       TesseraCli.main(Array("show-desugared", path.toString, "andIntro"))
     }
     assert(showDesugaredOutput.nonEmpty)
     assert(showDesugaredOutput.contains("(lambda A: Type[0] =>"))
-    assert(showDesugaredOutput.contains("Pair(A, B)"))
+    assert(showDesugaredOutput.contains("Tuple3(A, B, A)"))
 
     val showTraceOutput = withCapturedOut {
       TesseraCli.main(Array("trace-synth", path.toString, "andIntro"))
@@ -49,7 +49,7 @@ class CommandsTest extends FunSuite:
     assert(showTraceOutput.contains("trace-synth andIntro:"))
     assert(showTraceOutput.contains("param A : Type[0]"))
     assert(showTraceOutput.contains("param B : Type[0]"))
-    assert(showTraceOutput.contains("yield Pair(A, B)"))
+    assert(showTraceOutput.contains("yield Tuple3(A, B, A)"))
     assert(showTraceOutput.contains("desugared:"))
     assert(showTraceOutput.contains("(lambda A: Type[0] =>"))
   }

@@ -47,7 +47,7 @@ class ParserTest extends FunSuite:
       def andIntro : (Sort 0) = synth do {
         param A : (Sort 0)
         param B : (Sort 0)
-        yield (Ctor Pair (Var A) (Var B))
+        yield (A, B)
       }
       """
 
@@ -63,9 +63,53 @@ class ParserTest extends FunSuite:
         assertEquals(statements.size, 2)
         assertEquals(statements.head, ParsedParam("A", Sort(0)))
         assertEquals(statements(1), ParsedParam("B", Sort(0)))
-        assertEquals(yieldTerm, Constructor("Pair", List(Var("A"), Var("B"))))
+        assertEquals(yieldTerm, Constructor("Tuple2", List(Var("A"), Var("B"))))
       case _ =>
         fail("expected synth do declaration")
+  }
+
+  test("parser lowers tuple syntax to arity-specific constructors") {
+    assertEquals(
+      SimpleSyntaxParser.parseTermFromSource("(A, B)"),
+      Right(Constructor("Tuple2", List(Var("A"), Var("B"))))
+    )
+    assertEquals(
+      SimpleSyntaxParser.parseTermFromSource("(A, B, C)"),
+      Right(Constructor("Tuple3", List(Var("A"), Var("B"), Var("C"))))
+    )
+
+    val ten = (1 to 10).toList.map(index => Var(s"x$index"))
+    assertEquals(
+      SimpleSyntaxParser.parseTermFromSource("(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10)"),
+      Right(Constructor("Tuple10", ten))
+    )
+  }
+
+  test("parser accepts arbitrary terms inside tuple syntax") {
+    val Right(term) = SimpleSyntaxParser.parseTermFromSource(
+      "((Ctor F (Var x)), (App (Var f) (Var x)))"
+    )
+    assertEquals(
+      term,
+      Constructor(
+        "Tuple2",
+        List(
+          Constructor("F", List(Var("x"))),
+          App(Var("f"), Var("x"))
+        )
+      )
+    )
+  }
+
+  test("parser supports nested tuple syntax") {
+    val Right(term) = SimpleSyntaxParser.parseTermFromSource("((A, B), C)")
+    assertEquals(
+      term,
+      Constructor(
+        "Tuple2",
+        List(Constructor("Tuple2", List(Var("A"), Var("B"))), Var("C"))
+      )
+    )
   }
 
   test("parser supports for-do as synth-do alias") {
