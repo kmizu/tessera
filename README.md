@@ -74,6 +74,7 @@ Implemented in this slice:
 Current MVP `synth do` / `for` support:
 
 - `synth do { ... }` and `for { ... }` blocks with `param` and final `yield`
+- tuple sugar `(e1, ..., eN)` for 2–10 elements, which lowers to the ordinary constructor `TupleN(e1, ..., eN)`; explicit `Pair` constructors remain available
 - `sbt "runMain tessera.Main show-synth <file.tes> [decl]"` prints the parsed synthesis block shape
 - `sbt "runMain tessera.Main show-desugared <file.tes> [decl]"` prints the elaborated lambda core
 - `sbt "runMain tessera.Main trace-synth <file.tes> [decl]"` prints statement trace + desugared core

@@ -1,5 +1,5 @@
-def forAndIntro : (Sort 0) = for {
+def forAndIntro : (Pi A (Sort 0) (Pi B (Sort 0) (Sort 0))) = for {
   param A : (Sort 0)
   param B : (Sort 0)
-  yield (Ctor Pair (Var A) (Var B))
+  yield (A, B)
 }
