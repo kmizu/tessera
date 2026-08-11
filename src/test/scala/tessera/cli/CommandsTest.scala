@@ -80,9 +80,8 @@ class CommandsTest extends FunSuite:
 
     val evalDeclOutput = withCapturedOut {
       TesseraCli.main(Array("eval", path.toString, "id"))
-    }.trim
-    assert(evalDeclOutput.nonEmpty)
-    assert(evalDeclOutput.contains("(lambda"))
+    }
+    assertEquals(evalDeclOutput, "(lambda x: Type[0] => x)\n")
 
     val evalExprOutput = withCapturedOut {
       TesseraCli.main(
@@ -90,4 +89,88 @@ class CommandsTest extends FunSuite:
       )
     }.trim
     assertEquals(evalExprOutput, "Type[0]")
+  }
+
+  test("eval trace shows checked declaration stages") {
+    val path = writeExample(
+      """def id : (Pi A (Sort 0) (Pi x (Var A) (Var A))) =
+        |  (Lam A (Sort 0) (Lam x (Var A) (Var x)))""".stripMargin
+    )
+
+    val output = withCapturedOut {
+      TesseraCli.main(Array("eval", "--trace", path.toString, "id"))
+    }
+
+    assert(output.contains("eval trace:\n"))
+    assert(output.contains(s"  file: $path\n"))
+    assert(output.contains("  target: id\n"))
+    assert(output.contains("  kind: declaration\n"))
+    assert(output.contains("  parsed: (lambda A: Type[0] =>"))
+    assert(output.contains("  core: (lambda A: Type[0] =>"))
+    assert(output.contains("  expected: (A: Type[0]) -> (x: A) -> A\n"))
+    assert(output.contains("  kernel: OK\n"))
+    assert(output.contains("  normalized: (lambda A: Type[0] =>"))
+  }
+
+  test("eval trace labels inline normalization as unchecked") {
+    val path = writeExample("")
+    val output = withCapturedOut {
+      TesseraCli.main(Array("eval", "--trace", path.toString, "(Sort 0)"))
+    }
+
+    assert(output.contains("  kind: expression\n"))
+    assert(output.contains("  parsed: Type[0]\n"))
+    assert(output.contains("  core: Type[0]\n"))
+    assert(output.contains("  expected: <none>\n"))
+    assert(output.contains("  inferred: Type[1]\n"))
+    assert(output.contains("  kernel: inference only\n"))
+    assert(output.contains("  normalized (unchecked): Type[0]\n"))
+  }
+
+  test("eval trace reports unavailable inline inference") {
+    val path = writeExample("")
+    val output = withCapturedOut {
+      TesseraCli.main(Array("eval", "--trace", path.toString, "(Lam x (Sort 0) (Var x))"))
+    }
+
+    assert(output.contains("  inferred: unavailable: cannot infer type of lambda parameter `x`\n"))
+    assert(output.contains("  kernel: not checked\n"))
+    assert(output.contains("  normalized (unchecked): (lambda x: Type[0] => x)\n"))
+  }
+
+  test("eval trace stops after kernel rejection") {
+    val path = writeExample(
+      "def bad : (Sort 0) = (Lam x (Sort 0) (Var x))"
+    )
+    val output = withCapturedOut {
+      TesseraCli.main(Array("eval", "--trace", path.toString, "bad"))
+    }
+
+    assert(output.contains("  kernel: FAIL\n"))
+    assert(output.contains("    expected a function type, found: Type[0]\n"))
+    assert(!output.contains("normalized"))
+  }
+
+  test("eval trace reports module and expression parse failures") {
+    val brokenModule = writeExample("def broken :")
+    val moduleOutput = withCapturedOut {
+      TesseraCli.main(Array("eval", "--trace", brokenModule.toString, "broken"))
+    }
+    assert(moduleOutput.contains("  module parse: FAIL:"))
+    assert(!moduleOutput.contains("  kind:"))
+
+    val emptyModule = writeExample("")
+    val expressionOutput = withCapturedOut {
+      TesseraCli.main(Array("eval", "--trace", emptyModule.toString, "(App"))
+    }
+    assert(expressionOutput.contains("  kind: expression\n"))
+    assert(expressionOutput.contains("  expression parse: FAIL:"))
+    assert(!expressionOutput.contains("  core:"))
+  }
+
+  test("eval trace prints dedicated usage when arguments are missing") {
+    val output = withCapturedOut {
+      TesseraCli.main(Array("eval", "--trace"))
+    }
+    assertEquals(output, "usage: tessera eval --trace <file.tes> <decl or expression>\n")
   }

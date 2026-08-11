@@ -32,6 +32,10 @@ object TesseraCli:
         runCheck(file)
       case "check" :: Nil =>
         println("usage: tessera check <file.tes>")
+      case "eval" :: "--trace" :: file :: targetParts if targetParts.nonEmpty =>
+        runEvalTrace(file, targetParts.mkString(" "))
+      case "eval" :: "--trace" :: _ =>
+        println("usage: tessera eval --trace <file.tes> <decl or expression>")
       case cmd :: rest if supported.contains(cmd) =>
         if rest.isEmpty then
           val argHint =
@@ -49,6 +53,7 @@ object TesseraCli:
     println("Commands:")
     println("  check <file.tes>")
     println("  eval <file.tes> <decl or expression>")
+    println("  eval --trace <file.tes> <decl or expression>")
     println("  holes <file.tes>")
     println("  show-term <file.tes> [decl]")
     println("  show-core <file.tes> [decl]")
@@ -152,6 +157,79 @@ object TesseraCli:
             println(renderTerm(kernel.normalize(term)))
           case Left(error) =>
             println(s"unknown declaration or parse error: $error")
+
+  private def evalTraceHeader(file: String, target: String): Vector[String] =
+    Vector("eval trace:", s"  file: $file", s"  target: $target")
+
+  private def printEvalTrace(lines: Vector[String]): Unit =
+    println(lines.mkString("\n"))
+
+  private def singleLine(value: String): String =
+    value.linesIterator.mkString(" ")
+
+  private def uncheckedEvaluation(kernel: Kernel, term: Term): Vector[String] =
+    val inference = kernel.infer(term) match
+      case Right(inferred) =>
+        Vector(s"  inferred: ${renderTerm(inferred)}", "  kernel: inference only")
+      case Left(error) =>
+        Vector(s"  inferred: unavailable: ${error.message}", "  kernel: not checked")
+    inference :+ s"  normalized (unchecked): ${renderTerm(kernel.normalize(term))}"
+
+  private def runEvalTrace(file: String, target: String): Unit =
+    val header = evalTraceHeader(file, target)
+    parseModule(file) match
+      case Left(error) =>
+        printEvalTrace(header :+ s"  module parse: FAIL: $error")
+      case Right(declarations) =>
+        declarations.find(_.name == target) match
+          case Some(declaration) =>
+            val parsed = singleLine(renderParsedSyntax(declaration.value))
+            val prefix = header ++ Vector("  kind: declaration", s"  parsed: $parsed")
+            Elaborator.elaborate(declaration) match
+              case Left(message) =>
+                printEvalTrace(prefix :+ s"  elaboration: FAIL: $message")
+              case Right(elaborated) =>
+                val core = elaborated.core
+                val withCore = prefix :+ s"  core: ${renderTerm(core)}"
+                elaborated.declaredType match
+                  case Some(expected) =>
+                    val withExpected = withCore :+ s"  expected: ${renderTerm(expected)}"
+                    val kernel = Kernel()
+                    val report = kernel.check(core, expected)
+                    if report.isOk then
+                      printEvalTrace(
+                        withExpected ++ Vector(
+                          "  kernel: OK",
+                          s"  normalized: ${renderTerm(kernel.normalize(core))}"
+                        )
+                      )
+                    else
+                      printEvalTrace(
+                        withExpected ++ Vector("  kernel: FAIL") ++
+                          report.errors.map(error => s"    ${error.message}")
+                      )
+                  case None =>
+                    val kernel = Kernel()
+                    printEvalTrace(
+                      withCore ++ Vector("  expected: <none>") ++ uncheckedEvaluation(kernel, core)
+                    )
+          case None =>
+            SimpleSyntaxParser.parseTermFromSource(target) match
+              case Left(error) =>
+                printEvalTrace(
+                  header ++ Vector("  kind: expression", s"  expression parse: FAIL: $error")
+                )
+              case Right(term) =>
+                val rendered = renderTerm(term)
+                val kernel = Kernel()
+                printEvalTrace(
+                  header ++ Vector(
+                    "  kind: expression",
+                    s"  parsed: $rendered",
+                    s"  core: $rendered",
+                    "  expected: <none>"
+                  ) ++ uncheckedEvaluation(kernel, term)
+                )
 
   private def checkAndNormalize(kernel: Kernel, elaborated: ElaboratedDeclaration): Unit =
     elaborated.declaredType match
