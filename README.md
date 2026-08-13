@@ -12,6 +12,22 @@ This repository currently contains an executable MVP slice:
 
 ## Quick start
 
+Tessera v0.1.0 requires Java 17 or newer. From the
+[GitHub Release](https://github.com/kmizu/tessera/releases/tag/v0.1.0), download
+`tessera-0.1.0.jar` and its checksum, then run:
+
+```bash
+sha256sum -c tessera-0.1.0.jar.sha256
+curl -L https://raw.githubusercontent.com/kmizu/tessera/v0.1.0/examples/Constants.tes \
+  -o Constants.tes
+java -jar tessera-0.1.0.jar check Constants.tes
+```
+
+On macOS, use `shasum -a 256 -c tessera-0.1.0.jar.sha256` in place of
+`sha256sum`. The example files are also included in GitHub's source archive.
+
+To build and test from source instead:
+
 ```bash
 sbt test
 ```
@@ -21,6 +37,10 @@ Run a sample declaration file:
 ```bash
 sbt "runMain tessera.Main check examples/Identity.tes"
 sbt "runMain tessera.Main eval examples/Identity.tes id"
+sbt "runMain tessera.Main eval --trace examples/Identity.tes id"
+sbt "runMain tessera.Main check examples/Constants.tes"
+sbt "runMain tessera.Main eval examples/Constants.tes alias"
+sbt "runMain tessera.Main eval --trace examples/Constants.tes alias"
 ```
 
 You can also try the new `synth do` sugar example:
@@ -34,6 +54,7 @@ sbt "runMain tessera.Main show-desugared examples/AndIntro.tes andIntro"
 ```bash
 sbt "runMain tessera.Main check examples/Identity.tes"
 sbt "runMain tessera.Main eval examples/Identity.tes id"
+sbt "runMain tessera.Main eval --trace examples/Identity.tes id"
 sbt "runMain tessera.Main show-term examples/Identity.tes id"
 sbt "runMain tessera.Main show-core examples/Identity.tes"
 sbt "runMain tessera.Main show-synth examples/Identity.tes id"
@@ -58,12 +79,14 @@ Example corpus:
 - `examples/SynthesisParam.tes`
 - `examples/SynthesisFailure.tes`
 - `examples/SynthesisBranching.tes`
+- `examples/Constants.tes`
 
 Implemented in this slice:
 
 - `sbt test`
 - `sbt "runMain tessera.Main check <file.tes>"`
 - `sbt "runMain tessera.Main eval <file.tes> <decl or expression>"`
+- `sbt "runMain tessera.Main eval --trace <file.tes> <decl or expression>"`
 - `sbt "runMain tessera.Main show-term <file.tes> [decl]"`
 - `sbt "runMain tessera.Main show-core <file.tes> [decl]"`
 - `sbt "runMain tessera.Main show-synth <file.tes> [decl]"`
@@ -71,9 +94,17 @@ Implemented in this slice:
 - `sbt "runMain tessera.Main trace-synth <file.tes> [decl]"`
 - `sbt "runMain tessera.Main holes <file.tes> [decl]"`
 
+Current same-file declaration support:
+
+- declarations may reference earlier accepted declarations in the same file;
+- same-file `def` declarations are transparent during normalization;
+- forward references, recursion, imports, and opacity are not implemented.
+
 Current MVP `synth do` / `for` support:
 
-- `synth do { ... }` and `for { ... }` blocks with `param` and final `yield`
+- `synth do { ... }` and `for { ... }` blocks with `param`, `let`,
+  `name <- expression`, and final `yield`
+- tuple sugar `(e1, ..., eN)` for 2–10 elements, which lowers to the ordinary constructor `TupleN(e1, ..., eN)`; explicit `Pair` constructors remain available
 - `sbt "runMain tessera.Main show-synth <file.tes> [decl]"` prints the parsed synthesis block shape
 - `sbt "runMain tessera.Main show-desugared <file.tes> [decl]"` prints the elaborated lambda core
 - `sbt "runMain tessera.Main trace-synth <file.tes> [decl]"` prints statement trace + desugared core

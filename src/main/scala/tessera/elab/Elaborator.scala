@@ -26,7 +26,13 @@ object Elaborator:
       }
 
   def elaborate(decl: ParsedDeclaration): Either[String, ElaboratedDeclaration] =
-    Right(ElaboratedDeclaration(decl.name, decl.expectedType, toCore(decl.value)))
+    Right(
+      ElaboratedDeclaration(
+        decl.name,
+        decl.expectedType.map(NameResolver.resolve),
+        NameResolver.resolve(toCore(decl.value))
+      )
+    )
 
   def elaborateAll(decls: Vector[ParsedDeclaration]): Either[String, Vector[ElaboratedDeclaration]] =
     decls.foldLeft[Either[String, Vector[ElaboratedDeclaration]]](Right(Vector.empty)) {

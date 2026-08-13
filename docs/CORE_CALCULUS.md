@@ -10,3 +10,10 @@ Current core requirements:
 - lambda/application
 - let
 - constructors for base values
+
+Name representation is deliberately split:
+
+- `Term.Var` is a lexically scoped local name;
+- `Term.Constant` is a global declaration reference resolved through the kernel
+  environment;
+- `Term.DBVar` remains available for de Bruijn-oriented kernel operations.

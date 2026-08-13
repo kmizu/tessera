@@ -6,7 +6,9 @@
 /.bloop/
 /.scala-build/
 /project/target/
+/project/project/target/
 /target/
+/dist/
 
 # local runtime/tooling dirs that may appear in workspace
 /.sbt_boot/
