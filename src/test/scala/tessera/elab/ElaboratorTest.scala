@@ -64,3 +64,13 @@ class ElaboratorTest extends FunSuite:
       )
     )
   }
+
+  test("elaborator resolves declaration types and bodies") {
+    val Right(declarations) = SimpleSyntaxParser.parseModule(
+      "def alias : ExistingType = existingValue"
+    )
+    val Right(elaborated) = Elaborator.elaborate(declarations.head)
+
+    assertEquals(elaborated.declaredType, Some(Constant("ExistingType")))
+    assertEquals(elaborated.core, Constant("existingValue"))
+  }
