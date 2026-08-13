@@ -39,6 +39,7 @@ final class ArchitectureTest extends FunSuite:
           "tessera.parser",
           "tessera.elab",
           "tessera.meta",
+          "tessera.compiler",
           "tessera.cli"
         )
       )
@@ -62,6 +63,7 @@ final class ArchitectureTest extends FunSuite:
           "import tessera.parser",
           "import tessera.elab",
           "import tessera.meta",
+          "import tessera.compiler",
           "import tessera.cli"
         )
       )
@@ -84,6 +86,7 @@ final class ArchitectureTest extends FunSuite:
         Seq(
           "import tessera.parser",
           "import tessera.elab",
+          "import tessera.compiler",
           "import tessera.cli"
         )
       )
@@ -92,5 +95,16 @@ final class ArchitectureTest extends FunSuite:
         Vector.empty,
         s"meta file $path violates layering: ${issues.mkString(", ")}"
       )
+    }
+  }
+
+  test("parser and elaboration layers must not depend on compiler orchestration") {
+    Vector("tessera/parser", "tessera/elab").foreach { directory =>
+      val files = readScalaFiles(directory)
+      assert(files.nonEmpty)
+      files.foreach { path =>
+        val issues = forbiddenImports(readText(path), Seq("import tessera.compiler"))
+        assertEquals(issues, Vector.empty, s"lower-layer file $path violates layering")
+      }
     }
   }

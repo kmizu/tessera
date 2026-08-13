@@ -141,4 +141,8 @@ class KernelTest extends FunSuite:
 
     assertEquals(Kernel(environment).normalize(Constant("a")), Constant("a"))
   }
+
+  test("kernel infers a dependent Pi using its named binder") {
+    assertEquals(kernel.infer(idType), Right(Sort(0)))
+  }
 end KernelTest

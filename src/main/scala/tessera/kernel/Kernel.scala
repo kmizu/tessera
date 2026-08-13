@@ -132,11 +132,11 @@ class Kernel(
         if index >= 0 && index < ctx.length then Right(ctx(index)._2)
         else Left(KernelError.DeBruijnOutOfRange(index))
 
-      case Pi(_, domain, codomain) =>
+      case Pi(name, domain, codomain) =>
         for
           _ <- checkSort(domain, ctx)
-          _ <- checkSort(codomain, ctx :+ ("_", domain))
-          codomainSort <- inferType(codomain, ctx :+ ("_", domain))
+          _ <- checkSort(codomain, ctx :+ (name, domain))
+          codomainSort <- inferType(codomain, ctx :+ (name, domain))
           _ <- ensureSort(codomainSort)
         yield codomainSort
 
