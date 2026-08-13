@@ -1,0 +1,6 @@
+def id : (Pi A (Sort 0) (Pi x (Var A) (Var A))) =
+  (Lam A (Sort 0) (Lam x (Var A) (Var x)))
+
+def alias : (Pi A (Sort 0) (Pi x (Var A) (Var A))) = id
+
+def inferredAlias = alias

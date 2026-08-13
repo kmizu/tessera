@@ -22,6 +22,9 @@ Run a sample declaration file:
 sbt "runMain tessera.Main check examples/Identity.tes"
 sbt "runMain tessera.Main eval examples/Identity.tes id"
 sbt "runMain tessera.Main eval --trace examples/Identity.tes id"
+sbt "runMain tessera.Main check examples/Constants.tes"
+sbt "runMain tessera.Main eval examples/Constants.tes alias"
+sbt "runMain tessera.Main eval --trace examples/Constants.tes alias"
 ```
 
 You can also try the new `synth do` sugar example:
@@ -60,6 +63,7 @@ Example corpus:
 - `examples/SynthesisParam.tes`
 - `examples/SynthesisFailure.tes`
 - `examples/SynthesisBranching.tes`
+- `examples/Constants.tes`
 
 Implemented in this slice:
 
@@ -73,6 +77,12 @@ Implemented in this slice:
 - `sbt "runMain tessera.Main show-desugared <file.tes> [decl]"`
 - `sbt "runMain tessera.Main trace-synth <file.tes> [decl]"`
 - `sbt "runMain tessera.Main holes <file.tes> [decl]"`
+
+Current same-file declaration support:
+
+- declarations may reference earlier accepted declarations in the same file;
+- same-file `def` declarations are transparent during normalization;
+- forward references, recursion, imports, and opacity are not implemented.
 
 Current MVP `synth do` / `for` support:
 

@@ -227,7 +227,8 @@ class ParserTest extends FunSuite:
       "SynthesisExplicit.tes",
       "SynthesisParam.tes",
       "SynthesisFailure.tes",
-      "SynthesisBranching.tes"
+      "SynthesisBranching.tes",
+      "Constants.tes"
     )
 
     exampleNames.foreach { name =>
