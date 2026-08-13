@@ -6,6 +6,11 @@ import java.nio.file.{Files, Path}
 import java.io.{ByteArrayOutputStream, PrintStream}
 
 class CommandsTest extends FunSuite:
+  private val constantsSource =
+    """def id : (Pi A (Sort 0) (Pi x (Var A) (Var A))) =
+      |  (Lam A (Sort 0) (Lam x (Var A) (Var x)))
+      |def alias : (Pi A (Sort 0) (Pi x (Var A) (Var A))) = id""".stripMargin
+
   private def withCapturedOut(body: => Unit): String =
     val buffer = ByteArrayOutputStream()
     val stream = PrintStream(buffer, true, StandardCharsets.UTF_8)
@@ -204,4 +209,84 @@ class CommandsTest extends FunSuite:
     val expected = "usage: tessera eval --trace <file.tes> <decl or expression>\n"
     assertEquals(missingFile, expected)
     assertEquals(missingTarget, expected)
+  }
+
+  test("check accepts ordered constants") {
+    val path = writeExample(constantsSource)
+    val output = withCapturedOut {
+      TesseraCli.main(Array("check", path.toString))
+    }
+    assertEquals(output, "id: OK\nalias: OK\n")
+  }
+
+  test("check labels an unregistered unannotated lambda") {
+    val path = writeExample("def localId = (Lam x (Sort 0) (Var x))")
+    val output = withCapturedOut {
+      TesseraCli.main(Array("check", path.toString))
+    }
+    assertEquals(
+      output,
+      "localId: no type annotation, not registered: " +
+        "cannot infer type of lambda parameter `x`\n"
+    )
+  }
+
+  test("eval unfolds a declaration alias and resolves constants inline") {
+    val path = writeExample(constantsSource)
+    val expected = "(lambda A: Type[0] => (lambda x: A => x))\n"
+
+    val aliasOutput = withCapturedOut {
+      TesseraCli.main(Array("eval", path.toString, "alias"))
+    }
+    val inlineOutput = withCapturedOut {
+      TesseraCli.main(Array("eval", path.toString, "(App id (Sort 0))"))
+    }
+
+    assertEquals(aliasOutput, expected)
+    assertEquals(inlineOutput, "(lambda x: Type[0] => x)\n")
+  }
+
+  test("eval trace shows a constant core and delta-normalized value") {
+    val path = writeExample(constantsSource)
+    val output = withCapturedOut {
+      TesseraCli.main(Array("eval", "--trace", path.toString, "alias"))
+    }
+
+    assert(output.contains("  parsed: id\n"))
+    assert(output.contains("  core: id\n"))
+    assert(output.contains("  kernel: OK\n"))
+    assert(output.contains(
+      "  normalized: (lambda A: Type[0] => (lambda x: A => x))\n"
+    ))
+  }
+
+  test("eval does not normalize a rejected declaration or unknown inline constant") {
+    val path = writeExample(
+      """def bad : (Sort 0) = missing
+        |def ok : (Sort 0) = (Sort 0)""".stripMargin
+    )
+
+    val rejected = withCapturedOut {
+      TesseraCli.main(Array("eval", path.toString, "bad"))
+    }
+    val unknown = withCapturedOut {
+      TesseraCli.main(Array("eval", path.toString, "anotherMissing"))
+    }
+
+    assertEquals(rejected, "bad: FAIL\n  undefined constant: missing\n")
+    assertEquals(
+      unknown,
+      "unknown declaration or evaluation error: undefined constant: anotherMissing\n"
+    )
+  }
+
+  test("eval trace stops before normalizing an unknown inline constant") {
+    val path = writeExample("")
+    val output = withCapturedOut {
+      TesseraCli.main(Array("eval", "--trace", path.toString, "missing"))
+    }
+
+    assert(output.contains("  inferred: unavailable: undefined constant: missing\n"))
+    assert(output.contains("  kernel: FAIL\n"))
+    assert(!output.contains("normalized"))
   }

@@ -1,9 +1,16 @@
 package tessera.cli
 
+import tessera.compiler.{
+  CheckedModule,
+  DeclarationOutcome,
+  DeclarationStatus,
+  ModuleChecker
+}
 import tessera.core.Term
-import tessera.kernel.Kernel
+import tessera.core.TermAnalysis
+import tessera.kernel.{Kernel, KernelError}
 import tessera.parser.SimpleSyntaxParser
-import tessera.elab.{Elaborator, ElaboratedDeclaration}
+import tessera.elab.{Elaborator, NameResolver}
 import Term.*
 import SimpleSyntaxParser.ParsedDeclarationBody
 import SimpleSyntaxParser.ParsedSynthDo
@@ -66,31 +73,21 @@ object TesseraCli:
       case Left(error) =>
         println(s"parse error: $error")
       case Right(decls) =>
-        val kernel = Kernel()
-        val elaboratedDecls = decls.flatMap: decl =>
-          Elaborator.elaborate(decl).fold(
-            msg =>
-              println(s"${decl.name}: elaboration failed: $msg")
-              Nil
-            , elaborated =>
-              Vector(elaborated)
-          )
-        val allOk = elaboratedDecls.forall { decl =>
-          decl.declaredType match
-            case None =>
-              println(s"${decl.name}: no type annotation, skipped")
-              true
-            case Some(expected) =>
-              kernel.check(decl.core, expected) match
-                case report if report.isOk =>
-                  println(s"${decl.name}: OK")
-                  true
-                case report =>
-                  println(s"${decl.name}: FAIL")
-                  report.errors.foreach(err => println(s"  ${err.message}"))
-                  false
+        val module = ModuleChecker.check(decls)
+        module.outcomes.foreach {
+          case outcome if outcome.status == DeclarationStatus.Accepted =>
+            println(s"${outcome.name}: OK")
+          case outcome if outcome.status == DeclarationStatus.Unchecked =>
+            val detail = outcome.diagnostics.map(_.message).mkString("; ")
+            println(s"${outcome.name}: no type annotation, not registered: $detail")
+          case outcome =>
+            printOutcomeFailure(outcome)
         }
-        if !allOk then System.exit(1)
+        if module.hasFailures then System.exit(1)
+
+  private def printOutcomeFailure(outcome: DeclarationOutcome): Unit =
+    println(s"${outcome.name}: FAIL")
+    outcome.diagnostics.foreach(diagnostic => println(s"  ${diagnostic.message}"))
 
   private def runReadOnly(command: String, args: Vector[String]): Unit =
     val file = args.head
@@ -115,7 +112,7 @@ object TesseraCli:
             if args.length < 2 then
               println("usage: tessera eval <file.tes> <decl or expression>")
             else
-              evalTarget(decls, evalTargetExpr)
+              evalTarget(ModuleChecker.check(decls), evalTargetExpr)
           case "holes" =>
             showHoles(decls, declName)
           case _ =>
@@ -142,21 +139,24 @@ object TesseraCli:
           case Some(decl) =>
             println(render(decl))
 
-  private def evalTarget(declarations: Vector[SimpleSyntaxParser.ParsedDeclaration], target: String): Unit =
-    val kernel = Kernel()
-    declarations.find(_.name == target) match
-      case Some(decl) =>
-        Elaborator.elaborate(decl) match
-          case Left(msg) =>
-            println(s"${decl.name}: elaboration failed: $msg")
-          case Right(elaborated: ElaboratedDeclaration) =>
-            checkAndNormalize(kernel, elaborated)
+  private def evalTarget(module: CheckedModule, target: String): Unit =
+    val kernel = Kernel(module.environment)
+    module.find(target) match
+      case Some(outcome) if outcome.status == DeclarationStatus.Rejected =>
+        printOutcomeFailure(outcome)
+      case Some(outcome) =>
+        println(renderTerm(kernel.normalize(outcome.core.get)))
       case None =>
         SimpleSyntaxParser.parseTermFromSource(target) match
-          case Right(term) =>
-            println(renderTerm(kernel.normalize(term)))
           case Left(error) =>
             println(s"unknown declaration or parse error: $error")
+          case Right(parsed) =>
+            val term = NameResolver.resolve(parsed)
+            kernel.infer(term) match
+              case Right(_) | Left(KernelError.CannotInferLambda(_)) =>
+                println(renderTerm(kernel.normalize(term)))
+              case Left(error) =>
+                println(s"unknown declaration or evaluation error: ${error.message}")
 
   private def evalTraceHeader(file: String, target: String): Vector[String] =
     Vector("eval trace:", s"  file: $file", s"  target: $target")
@@ -168,12 +168,21 @@ object TesseraCli:
     value.linesIterator.mkString(" ")
 
   private def uncheckedEvaluation(kernel: Kernel, term: Term): Vector[String] =
-    val inference = kernel.infer(term) match
+    kernel.infer(term) match
       case Right(inferred) =>
-        Vector(s"  inferred: ${renderTerm(inferred)}", "  kernel: inference only")
+        Vector(
+          s"  inferred: ${renderTerm(inferred)}",
+          "  kernel: inference only",
+          s"  normalized (unchecked): ${renderTerm(kernel.normalize(term))}"
+        )
+      case Left(error @ KernelError.CannotInferLambda(_)) =>
+        Vector(
+          s"  inferred: unavailable: ${error.message}",
+          "  kernel: not checked",
+          s"  normalized (unchecked): ${renderTerm(kernel.normalize(term))}"
+        )
       case Left(error) =>
-        Vector(s"  inferred: unavailable: ${error.message}", "  kernel: not checked")
-    inference :+ s"  normalized (unchecked): ${renderTerm(kernel.normalize(term))}"
+        Vector(s"  inferred: unavailable: ${error.message}", "  kernel: FAIL")
 
   private def runEvalTrace(file: String, target: String): Unit =
     val header = evalTraceHeader(file, target)
@@ -181,38 +190,11 @@ object TesseraCli:
       case Left(error) =>
         printEvalTrace(header :+ s"  module parse: FAIL: $error")
       case Right(declarations) =>
-        declarations.find(_.name == target) match
-          case Some(declaration) =>
-            val parsed = singleLine(renderParsedSyntax(declaration.value))
-            val prefix = header ++ Vector("  kind: declaration", s"  parsed: $parsed")
-            Elaborator.elaborate(declaration) match
-              case Left(message) =>
-                printEvalTrace(prefix :+ s"  elaboration: FAIL: $message")
-              case Right(elaborated) =>
-                val core = elaborated.core
-                val withCore = prefix :+ s"  core: ${renderTerm(core)}"
-                elaborated.declaredType match
-                  case Some(expected) =>
-                    val withExpected = withCore :+ s"  expected: ${renderTerm(expected)}"
-                    val kernel = Kernel()
-                    val report = kernel.check(core, expected)
-                    if report.isOk then
-                      printEvalTrace(
-                        withExpected ++ Vector(
-                          "  kernel: OK",
-                          s"  normalized: ${renderTerm(kernel.normalize(core))}"
-                        )
-                      )
-                    else
-                      printEvalTrace(
-                        withExpected ++ Vector("  kernel: FAIL") ++
-                          report.errors.map(error => s"    ${error.message}")
-                      )
-                  case None =>
-                    val kernel = Kernel()
-                    printEvalTrace(
-                      withCore ++ Vector("  expected: <none>") ++ uncheckedEvaluation(kernel, core)
-                    )
+        val module = ModuleChecker.check(declarations)
+        val kernel = Kernel(module.environment)
+        module.find(target) match
+          case Some(outcome) =>
+            printEvalTrace(traceDeclaration(header, outcome, kernel))
           case None =>
             SimpleSyntaxParser.parseTermFromSource(target) match
               case Left(error) =>
@@ -220,28 +202,61 @@ object TesseraCli:
                   header ++ Vector("  kind: expression", s"  expression parse: FAIL: $error")
                 )
               case Right(term) =>
-                val rendered = renderTerm(term)
-                val kernel = Kernel()
+                val resolved = NameResolver.resolve(term)
+                val rendered = renderTerm(resolved)
                 printEvalTrace(
                   header ++ Vector(
                     "  kind: expression",
                     s"  parsed: $rendered",
                     s"  core: $rendered",
                     "  expected: <none>"
-                  ) ++ uncheckedEvaluation(kernel, term)
+                  ) ++ uncheckedEvaluation(kernel, resolved)
                 )
 
-  private def checkAndNormalize(kernel: Kernel, elaborated: ElaboratedDeclaration): Unit =
-    elaborated.declaredType match
-      case Some(expected) =>
-        kernel.check(elaborated.core, expected) match
-          case report if report.isOk =>
-            println(renderTerm(kernel.normalize(elaborated.core)))
-          case report =>
-            println(s"${elaborated.name}: FAIL")
-            report.errors.foreach(err => println(s"  ${err.message}"))
+  private def traceDeclaration(
+    header: Vector[String],
+    outcome: DeclarationOutcome,
+    kernel: Kernel
+  ): Vector[String] =
+    val parsed = singleLine(renderParsedSyntax(outcome.declaration.value))
+    val prefix = header ++ Vector("  kind: declaration", s"  parsed: $parsed")
+    outcome.core match
       case None =>
-        println(renderTerm(kernel.normalize(elaborated.core)))
+        prefix ++ Vector("  module: FAIL") ++ diagnosticLines(outcome)
+      case Some(core) =>
+        val withCore = prefix :+ s"  core: ${renderTerm(core)}"
+        outcome.status match
+          case DeclarationStatus.Accepted =>
+            outcome.declaredType match
+              case Some(expected) =>
+                withCore ++ Vector(
+                  s"  expected: ${renderTerm(expected)}",
+                  "  kernel: OK",
+                  s"  normalized: ${renderTerm(kernel.normalize(core))}"
+                )
+              case None =>
+                withCore ++ Vector(
+                  "  expected: <none>",
+                  s"  inferred: ${renderTerm(outcome.inferredType.get)}",
+                  "  kernel: inference only",
+                  s"  normalized (unchecked): ${renderTerm(kernel.normalize(core))}"
+                )
+          case DeclarationStatus.Unchecked =>
+            val detail = outcome.diagnostics.map(_.message).mkString("; ")
+            withCore ++ Vector(
+              "  expected: <none>",
+              s"  inferred: unavailable: $detail",
+              "  kernel: not checked",
+              s"  normalized (unchecked): ${renderTerm(kernel.normalize(core))}"
+            )
+          case DeclarationStatus.Rejected =>
+            val expected = outcome.declaredType
+              .map(term => Vector(s"  expected: ${renderTerm(term)}"))
+              .getOrElse(Vector("  expected: <none>"))
+            withCore ++ expected ++ Vector("  kernel: FAIL") ++ diagnosticLines(outcome)
+
+  private def diagnosticLines(outcome: DeclarationOutcome): Vector[String] =
+    outcome.diagnostics.map(diagnostic => s"    ${diagnostic.message}")
 
   private def renderTerm(term: Term): String =
     tessera.kernel.Printer.render(term)
@@ -287,7 +302,7 @@ desugared:
 
   private def showHoles(declarations: Vector[SimpleSyntaxParser.ParsedDeclaration], declNameOpt: Option[String]): Unit =
     val elaborated = declarations.map { decl =>
-      decl -> collectHoles(Elaborator.toCore(decl.value))
+      decl -> TermAnalysis.collectHoles(Elaborator.toCore(decl.value))
     }
 
     declNameOpt match
@@ -315,16 +330,3 @@ desugared:
               holes.foreach { hole =>
                 println(renderTerm(Term.Hole(hole.name, hole.expectedType)))
               }
-
-  private def collectHoles(term: Term): Vector[Term.Hole] =
-    term match
-      case hole @ Term.Hole(_, _) => Vector(hole)
-      case App(function, argument) => collectHoles(function) ++ collectHoles(argument)
-      case Let(_, valueType, value, body) =>
-        collectHoles(valueType) ++ collectHoles(value) ++ collectHoles(body)
-      case Pi(_, domain, codomain) =>
-        collectHoles(domain) ++ collectHoles(codomain)
-      case Lambda(_, paramType, body) =>
-        collectHoles(paramType) ++ collectHoles(body)
-      case Constructor(_, fields) => fields.toVector.flatMap(collectHoles)
-      case _ => Vector.empty
