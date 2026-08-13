@@ -82,18 +82,20 @@ JDK compatibility.
 ## Release Automation
 
 Add a release workflow triggered only by tags matching `v*`. It uses
-`contents: write` and performs these stages in order:
+`contents: write` plus read-only check access and performs these stages in order:
 
 1. check out the exact tagged commit;
 2. verify the tag is `v0.1.0`-shaped and equals `v` plus the sbt project
    version;
-3. configure Java 17 and sbt;
-4. run the complete test suite;
-5. build the assembly JAR;
-6. run a smoke test with the JAR against `examples/Constants.tes` and require
+3. require an annotated tag whose peeled commit is contained in `main` and has
+   a successful Java 17 CI check;
+4. configure Java 17 and sbt;
+5. run the complete test suite;
+6. build the assembly JAR;
+7. run a smoke test with the JAR against `examples/Constants.tes` and require
    `id`, `alias`, and `inferredAlias` to succeed;
-7. generate and verify the SHA-256 checksum;
-8. create the GitHub Release and upload both files.
+8. generate and verify the SHA-256 checksum;
+9. create the GitHub Release and upload both files.
 
 Publication happens only after every validation stage succeeds. Re-running the
 workflow for an existing release must fail clearly rather than silently replace
@@ -133,7 +135,8 @@ the public default-branch history.
 
 ## Failure Handling
 
-- Test, assembly, smoke, checksum, or tag/version failures prevent publication.
+- Test, assembly, smoke, checksum, tag/version, annotated-tag, main-ancestry,
+  or green-CI provenance failures prevent publication.
 - A failed release workflow leaves no manually created replacement release.
 - A tag pointing at the wrong commit is not force-moved. Corrective action uses
   a new version unless the unpublished tag can be removed safely with explicit

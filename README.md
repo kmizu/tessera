@@ -18,11 +18,13 @@ Tessera v0.1.0 requires Java 17 or newer. From the
 
 ```bash
 sha256sum -c tessera-0.1.0.jar.sha256
-java -jar tessera-0.1.0.jar check examples/Constants.tes
+curl -L https://raw.githubusercontent.com/kmizu/tessera/v0.1.0/examples/Constants.tes \
+  -o Constants.tes
+java -jar tessera-0.1.0.jar check Constants.tes
 ```
 
 On macOS, use `shasum -a 256 -c tessera-0.1.0.jar.sha256` in place of
-`sha256sum`. The `examples` directory is included in the GitHub source archive.
+`sha256sum`. The example files are also included in GitHub's source archive.
 
 To build and test from source instead:
 

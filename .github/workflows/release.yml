@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  checks: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -34,6 +35,26 @@ jobs:
           bash scripts/verify-release-tag.sh "$GITHUB_REF_NAME" "$version"
       - name: Test release tag validator
         run: bash src/test/sh/release-tag-test.sh
+      - name: Test release provenance validator
+        run: bash src/test/sh/release-provenance-test.sh
+      - name: Verify annotated tag and green main provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags origin main
+          tagged_commit="$(bash scripts/verify-release-provenance.sh \
+            "$GITHUB_REF_NAME" refs/remotes/origin/main)"
+          if [[ "$tagged_commit" != "$GITHUB_SHA" ]]; then
+            echo "tagged commit $tagged_commit does not match workflow commit $GITHUB_SHA" >&2
+            exit 1
+          fi
+          ci_conclusion="$(gh api \
+            "/repos/$GITHUB_REPOSITORY/commits/$tagged_commit/check-runs?check_name=Java%2017%20test%20suite&filter=latest&per_page=1" \
+            --jq '.check_runs[0].conclusion // ""')"
+          if [[ "$ci_conclusion" != "success" ]]; then
+            echo "Java 17 CI is not green for release commit $tagged_commit" >&2
+            exit 1
+          fi
       - name: Build and verify release assets
         run: bash src/test/sh/release-artifact-test.sh
       - name: Stage release assets
@@ -44,9 +65,14 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           asset_dir="$RUNNER_TEMP/tessera-release"
+          notes_file="docs/releases/$GITHUB_REF_NAME.md"
+          if [[ ! -f "$notes_file" ]]; then
+            echo "release notes not found: $notes_file" >&2
+            exit 1
+          fi
           gh release create "$GITHUB_REF_NAME" \
             "$asset_dir/tessera-$version.jar" \
             "$asset_dir/tessera-$version.jar.sha256" \
             --verify-tag \
             --title "Tessera $GITHUB_REF_NAME" \
-            --notes-file docs/releases/v0.1.0.md
+            --notes-file "$notes_file"
