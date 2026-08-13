@@ -95,14 +95,16 @@ class Kernel(
     case Hole(name, expectedType) =>
       Hole(name, expectedType.map(normalize(_, unfolding)))
     case App(function, argument) =>
-      normalize(function, unfolding) match
+      val (normalizedFunction, functionUnfolding) =
+        normalizeFunction(function, unfolding)
+      normalizedFunction match
         case Lambda(name, _, body) =>
           normalize(
             substituteByName(body, name, normalize(argument, unfolding)),
-            unfolding
+            functionUnfolding
           )
-        case normalizedFunction =>
-          App(normalizedFunction, normalize(argument, unfolding))
+        case other =>
+          App(other, normalize(argument, unfolding))
     case Let(name, _, value, body) =>
       normalize(substituteByName(body, name, value), unfolding)
     case Pi(name, domain, codomain) =>
@@ -113,6 +115,32 @@ class Kernel(
       Constructor(name, fields.map(normalize(_, unfolding)))
     case leaf @ (Sort(_) | Var(_) | DBVar(_) | Builtin(_) | UnitLit()) => leaf
 
+  private def normalizeFunction(
+    term: Term,
+    unfolding: Set[String]
+  ): (Term, Set[String]) = term match
+    case Constant(name) if unfolding.contains(name) =>
+      Constant(name) -> unfolding
+    case Constant(name) =>
+      environment.lookup(name) match
+        case Some(declaration) =>
+          normalizeFunction(declaration.value, unfolding + name)
+        case None => Constant(name) -> unfolding
+    case Let(name, _, value, body) =>
+      normalizeFunction(substituteByName(body, name, value), unfolding)
+    case App(function, argument) =>
+      val (normalizedFunction, functionUnfolding) =
+        normalizeFunction(function, unfolding)
+      normalizedFunction match
+        case Lambda(name, _, body) =>
+          normalizeFunction(
+            substituteByName(body, name, normalize(argument, unfolding)),
+            functionUnfolding
+          )
+        case other =>
+          App(other, normalize(argument, unfolding)) -> functionUnfolding
+    case other => normalize(other, unfolding) -> unfolding
+
   private def inferType(term: Term, ctx: Vector[(String, Term)]): Either[KernelError, Term] =
     term match
       case s: Sort =>
@@ -120,7 +148,7 @@ class Kernel(
         else Left(KernelError.ExpectedSort(s))
 
       case Var(name) =>
-        ctx.find(_._1 == name).map(_._2)
+        ctx.reverseIterator.find(_._1 == name).map(_._2)
           .toRight(KernelError.UndefinedVariable(name))
 
       case Constant(name) =>
@@ -211,7 +239,7 @@ class Kernel(
           Left(KernelError.DeBruijnOutOfRange(index))
 
       case Var(name) =>
-        ctx.find(_._1 == name) match
+        ctx.reverseIterator.find(_._1 == name) match
           case Some((_, foundType)) =>
             inferType(foundType, ctx) match
               case Right(actualType) =>

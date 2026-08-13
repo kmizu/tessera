@@ -36,6 +36,17 @@ final class ModuleCheckerTest extends FunSuite:
     assert(outcome.diagnostics.exists(_.message.contains("cannot infer type of lambda")))
   }
 
+  test("lambda inference failure below a non-lambda declaration is rejected") {
+    val module = check(
+      "def applied = (App (Lam x (Sort 0) (Var x)) (Sort 0))"
+    )
+    val outcome = module.outcomes.head
+
+    assertEquals(outcome.status, DeclarationStatus.Rejected)
+    assertEquals(module.environment.names, Vector.empty)
+    assert(outcome.diagnostics.exists(_.message.contains("cannot infer type of lambda")))
+  }
+
   test("module checker unfolds an earlier constant used as a type annotation") {
     val module = check(
       """def IdType : (Sort 0) =

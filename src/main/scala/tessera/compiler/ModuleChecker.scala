@@ -121,7 +121,8 @@ object ModuleChecker:
                 kernel.infer(elaborated.core) match
                   case Right(inferred) =>
                     register(marked, declaration, elaborated, inferred, Some(inferred))
-                  case Left(error @ KernelError.CannotInferLambda(_)) =>
+                  case Left(error @ KernelError.CannotInferLambda(_))
+                      if elaborated.core.isInstanceOf[Term.Lambda] =>
                     append(
                       marked,
                       resolvedOutcome(

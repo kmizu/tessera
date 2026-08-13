@@ -142,7 +142,42 @@ class KernelTest extends FunSuite:
     assertEquals(Kernel(environment).normalize(Constant("a")), Constant("a"))
   }
 
+  test("kernel normalization preserves its cycle guard across beta reduction") {
+    val recursiveBody = Lambda(
+      "x",
+      Sort(0),
+      App(Constant("f"), Var("x"))
+    )
+    val environment = environmentOf(
+      KernelDeclaration("f", Pi("x", Sort(0), Sort(0)), recursiveBody)
+    )
+    val application = App(Constant("f"), UnitLit())
+
+    assertEquals(Kernel(environment).normalize(application), application)
+  }
+
   test("kernel infers a dependent Pi using its named binder") {
     assertEquals(kernel.infer(idType), Right(Sort(0)))
+  }
+
+  test("kernel lookup uses the nearest same-named Pi binder") {
+    val term = Pi("A", Sort(0), Pi("A", Sort(1), Var("A")))
+    assertEquals(kernel.infer(term), Right(Sort(1)))
+  }
+
+  test("kernel lookup uses the nearest same-named lambda binder") {
+    val expected = Pi("x", Sort(0), Pi("x", Sort(1), Sort(1)))
+    val term = Lambda("x", Sort(0), Lambda("x", Sort(1), Var("x")))
+    assert(kernel.check(term, expected).isOk)
+  }
+
+  test("kernel lookup uses the nearest same-named let binder") {
+    val term = Let(
+      "x",
+      Sort(0),
+      Sort(0),
+      Let("x", Sort(1), Sort(1), Var("x"))
+    )
+    assertEquals(kernel.infer(term), Right(Sort(1)))
   }
 end KernelTest
