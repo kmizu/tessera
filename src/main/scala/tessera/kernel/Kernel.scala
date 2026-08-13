@@ -72,7 +72,7 @@ class Kernel:
         Pi(name, normalize(domain), normalize(codomain))
       case Lambda(name, paramType, body) =>
         Lambda(name, normalize(paramType), normalize(body))
-      case App(_, _) | Constructor(_, _) | Sort(_) | Var(_) | DBVar(_) | Builtin(_) | UnitLit() =>
+      case App(_, _) | Constructor(_, _) | Sort(_) | Constant(_) | Var(_) | DBVar(_) | Builtin(_) | UnitLit() =>
         term
 
   def isDefEq(left: Term, right: Term): Boolean =
@@ -251,6 +251,7 @@ class Kernel:
       case h @ Hole(holeName, expectedType) =>
         Hole(holeName, expectedType.map(substituteByName(_, name, replacement)))
       case s @ Sort(_) => s
+      case constant @ Constant(_) => constant
       case v @ Var(current) =>
         if current == name then replacement else v
       case DBVar(index) => DBVar(index)
@@ -275,6 +276,7 @@ class Kernel:
       case h @ Hole(holeName, expectedType) =>
         Hole(holeName, expectedType.map(field => substituteByIndex(field, index, replacement, level)))
       case s @ Sort(_) => s
+      case constant @ Constant(_) => constant
       case db @ DBVar(i) =>
         if i == index + level then
           shiftByIndex(replacement, level, 0)
@@ -313,6 +315,7 @@ class Kernel:
       case h @ Hole(holeName, expectedType) =>
         Hole(holeName, expectedType.map(field => shiftByIndex(field, amount, cutoff)))
       case s @ Sort(_) => s
+      case constant @ Constant(_) => constant
       case DBVar(index) => if index >= cutoff then DBVar(index + amount) else DBVar(index)
       case v @ Var(_) => v
       case p @ Pi(name, domain, codomain) =>
@@ -332,6 +335,7 @@ object Printer:
   def render(term: Term): String = term match
     case Sort(level) => s"Type[$level]"
     case DBVar(index) => s"#$index"
+    case Constant(name) => name
     case Var(name) => name
     case Let(name, valueType, value, body) =>
       s"let $name: ${render(valueType)} = ${render(value)} in ${render(body)}"

@@ -12,6 +12,11 @@ object Term:
   case class Var(name: String) extends Term
 
   /**
+   * A global declaration reference, distinct from lexically scoped variables.
+   */
+  case class Constant(name: String) extends Term
+
+  /**
    * De Bruijn index for future kernel-normal forms.
    */
   case class DBVar(index: Int) extends Term

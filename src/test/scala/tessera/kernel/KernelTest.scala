@@ -72,4 +72,11 @@ class KernelTest extends FunSuite:
     assertEquals(report.errors.size, 1)
     assert(report.errors.head.isInstanceOf[KernelError.NotTypeMismatch])
   }
+
+  test("constant is a stable structural leaf") {
+    val constant = Constant("id")
+    assertEquals(Printer.render(constant), "id")
+    assertEquals(kernel.shift(constant, 3), constant)
+    assertEquals(kernel.substitute(0, Sort(0), constant), constant)
+  }
 end KernelTest
