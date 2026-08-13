@@ -6,6 +6,13 @@ import tessera.core.Term._
 
 class KernelTest extends FunSuite:
   private val kernel = Kernel()
+  private val idType = Pi("A", Sort(0), Pi("x", Var("A"), Var("A")))
+  private val idBody = Lambda("A", Sort(0), Lambda("x", Var("A"), Var("x")))
+
+  private def environmentOf(declarations: KernelDeclaration*): KernelEnvironment =
+    declarations.foldLeft(KernelEnvironment.empty) { (environment, declaration) =>
+      environment.define(declaration).toOption.get
+    }
 
   test("kernel accepts a closed identity term type") {
     val termType: Term =
@@ -78,5 +85,60 @@ class KernelTest extends FunSuite:
     assertEquals(Printer.render(constant), "id")
     assertEquals(kernel.shift(constant, 3), constant)
     assertEquals(kernel.substitute(0, Sort(0), constant), constant)
+  }
+
+  test("kernel infers known constants and rejects unknown constants") {
+    val environment = environmentOf(KernelDeclaration("id", idType, idBody))
+    val withEnvironment = Kernel(environment)
+
+    assertEquals(withEnvironment.infer(Constant("id")), Right(idType))
+    assertEquals(
+      withEnvironment.infer(Constant("missing")),
+      Left(KernelError.UndefinedConstant("missing"))
+    )
+    assertEquals(withEnvironment.normalize(Constant("missing")), Constant("missing"))
+  }
+
+  test("kernel preflight rejects unknown constants nested below opaque typing rules") {
+    val lambda = Lambda("x", Sort(0), Constant("missing"))
+    val constructor = Constructor("Box", List(Constant("missing")))
+    val annotatedHole = Hole("goal", Some(Constant("missing")))
+
+    assertEquals(Kernel().infer(lambda), Left(KernelError.UndefinedConstant("missing")))
+    assertEquals(Kernel().infer(constructor), Left(KernelError.UndefinedConstant("missing")))
+    assertEquals(Kernel().infer(annotatedHole), Left(KernelError.UndefinedConstant("missing")))
+    assertEquals(
+      Kernel().check(Sort(0), Constant("missing")).errors,
+      Vector(KernelError.UndefinedConstant("missing"))
+    )
+  }
+
+  test("kernel delta-normalizes aliases and uses them in definitional equality") {
+    val environment = environmentOf(
+      KernelDeclaration("id", idType, idBody),
+      KernelDeclaration("alias", idType, Constant("id")),
+      KernelDeclaration("secondAlias", idType, Constant("alias")),
+      KernelDeclaration("IdType", Sort(0), idType),
+      KernelDeclaration("typedId", Constant("IdType"), idBody)
+    )
+    val withEnvironment = Kernel(environment)
+
+    assertEquals(withEnvironment.normalize(Constant("secondAlias")), idBody)
+    assert(withEnvironment.isDefEq(Constant("alias"), idBody))
+    assert(withEnvironment.check(Constant("alias"), idType).isOk)
+    assert(withEnvironment.check(idBody, Constant("IdType")).isOk)
+    assertEquals(
+      withEnvironment.infer(App(Constant("typedId"), Sort(0))),
+      Right(Pi("x", Sort(0), Sort(0)))
+    )
+  }
+
+  test("kernel normalization terminates on a manually cyclic environment") {
+    val environment = environmentOf(
+      KernelDeclaration("a", Sort(0), Constant("b")),
+      KernelDeclaration("b", Sort(0), Constant("a"))
+    )
+
+    assertEquals(Kernel(environment).normalize(Constant("a")), Constant("a"))
   }
 end KernelTest

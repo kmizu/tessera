@@ -1,12 +1,16 @@
 package tessera.kernel
 
 import tessera.core.Term
+import tessera.core.TermAnalysis
 import Term.*
 
 sealed trait KernelError:
   def message: String
 
 object KernelError:
+  case class UndefinedConstant(name: String) extends KernelError:
+    override val message: String = s"undefined constant: $name"
+
   case class UndefinedVariable(name: String) extends KernelError:
     override val message: String =
       s"undefined variable: $name"
@@ -41,7 +45,9 @@ final case class KernelReport(errors: Vector[KernelError]):
 
 type KernelCheckResult = KernelReport
 
-class Kernel:
+class Kernel(
+  val environment: KernelEnvironment = KernelEnvironment.empty
+):
   def checkDecl(declarationType: Term, term: Term): KernelReport =
     check(term, declarationType, Vector.empty)
 
@@ -49,31 +55,17 @@ class Kernel:
     check(term, expected, Vector.empty)
 
   def check(term: Term, expected: Term, ctx: Vector[(String, Term)]): KernelReport =
-    checkWithContext(term, expected, ctx) match
-      case Right(_) => KernelReport(Vector.empty)
+    validateConstants(Vector(term, expected) ++ ctx.map(_._2)) match
       case Left(error) => KernelReport(Vector(error))
+      case Right(_) =>
+        checkWithContext(term, expected, ctx) match
+          case Right(_) => KernelReport(Vector.empty)
+          case Left(error) => KernelReport(Vector(error))
 
   def infer(term: Term): Either[KernelError, Term] =
-    inferType(term, Vector.empty)
+    validateConstants(Vector(term)).flatMap(_ => inferType(term, Vector.empty))
 
-  def normalize(term: Term): Term =
-    term match
-      case Hole(name, expectedType) =>
-        Hole(name, expectedType.map(normalize))
-      case App(function, argument) =>
-        normalize(function) match
-          case Lambda(name, _, body) =>
-            normalize(substituteByName(body, name, normalize(argument)))
-          case nf =>
-            App(nf, normalize(argument))
-      case Let(name, valueType, value, body) =>
-        normalize(substituteByName(body, name, value))
-      case Pi(name, domain, codomain) =>
-        Pi(name, normalize(domain), normalize(codomain))
-      case Lambda(name, paramType, body) =>
-        Lambda(name, normalize(paramType), normalize(body))
-      case App(_, _) | Constructor(_, _) | Sort(_) | Constant(_) | Var(_) | DBVar(_) | Builtin(_) | UnitLit() =>
-        term
+  def normalize(term: Term): Term = normalize(term, Set.empty)
 
   def isDefEq(left: Term, right: Term): Boolean =
     normalize(left) == normalize(right)
@@ -87,6 +79,40 @@ class Kernel:
   def substitute(index: Int, replacement: Term, term: Term): Term =
     substituteByIndex(term, index, replacement, 0)
 
+  private def validateConstants(terms: Vector[Term]): Either[KernelError, Unit] =
+    terms.iterator
+      .flatMap(TermAnalysis.collectConstants)
+      .find(name => !environment.contains(name))
+      .map(name => Left(KernelError.UndefinedConstant(name)))
+      .getOrElse(Right(()))
+
+  private def normalize(term: Term, unfolding: Set[String]): Term = term match
+    case Constant(name) if unfolding.contains(name) => Constant(name)
+    case Constant(name) =>
+      environment.lookup(name) match
+        case Some(declaration) => normalize(declaration.value, unfolding + name)
+        case None => Constant(name)
+    case Hole(name, expectedType) =>
+      Hole(name, expectedType.map(normalize(_, unfolding)))
+    case App(function, argument) =>
+      normalize(function, unfolding) match
+        case Lambda(name, _, body) =>
+          normalize(
+            substituteByName(body, name, normalize(argument, unfolding)),
+            unfolding
+          )
+        case normalizedFunction =>
+          App(normalizedFunction, normalize(argument, unfolding))
+    case Let(name, _, value, body) =>
+      normalize(substituteByName(body, name, value), unfolding)
+    case Pi(name, domain, codomain) =>
+      Pi(name, normalize(domain, unfolding), normalize(codomain, unfolding))
+    case Lambda(name, paramType, body) =>
+      Lambda(name, normalize(paramType, unfolding), normalize(body, unfolding))
+    case Constructor(name, fields) =>
+      Constructor(name, fields.map(normalize(_, unfolding)))
+    case leaf @ (Sort(_) | Var(_) | DBVar(_) | Builtin(_) | UnitLit()) => leaf
+
   private def inferType(term: Term, ctx: Vector[(String, Term)]): Either[KernelError, Term] =
     term match
       case s: Sort =>
@@ -96,6 +122,11 @@ class Kernel:
       case Var(name) =>
         ctx.find(_._1 == name).map(_._2)
           .toRight(KernelError.UndefinedVariable(name))
+
+      case Constant(name) =>
+        environment.lookup(name)
+          .map(_.declaredType)
+          .toRight(KernelError.UndefinedConstant(name))
 
       case DBVar(index) =>
         if index >= 0 && index < ctx.length then Right(ctx(index)._2)
@@ -113,7 +144,7 @@ class Kernel:
         Left(KernelError.CannotInferLambda(l.name))
 
       case App(function, argument) =>
-        inferType(function, ctx) match
+        inferType(function, ctx).map(normalize) match
           case Right(Pi(name, domain, codomain)) =>
             checkWithContext(argument, domain, ctx) match
               case Right(_) => Right(substituteByName(codomain, name, argument))
@@ -142,7 +173,8 @@ class Kernel:
           case Some(expected) => Right(expected)
           case None => Right(Sort(0))
 
-  private def checkWithContext(term: Term, expected: Term, ctx: Vector[(String, Term)]): Either[KernelError, Unit] =
+  private def checkWithContext(term: Term, expectedTerm: Term, ctx: Vector[(String, Term)]): Either[KernelError, Unit] =
+    val expected = normalize(expectedTerm)
     term match
       case l: Lambda =>
         expected match
@@ -190,6 +222,12 @@ class Kernel:
                   case Left(err) => Left(err)
               case Left(err) => Left(err)
           case None => Left(KernelError.UndefinedVariable(name))
+
+      case constant @ Constant(_) =>
+        inferType(constant, ctx) match
+          case Right(actual) if typesEqual(actual, expected) => Right(())
+          case Right(actual) => Left(KernelError.NotTypeMismatch(expected, actual))
+          case Left(error) => Left(error)
 
       case app @ App(_, _) =>
         inferType(app, ctx) match
