@@ -12,6 +12,20 @@ This repository currently contains an executable MVP slice:
 
 ## Quick start
 
+Tessera v0.1.0 requires Java 17 or newer. From the
+[GitHub Release](https://github.com/kmizu/tessera/releases/tag/v0.1.0), download
+`tessera-0.1.0.jar` and its checksum, then run:
+
+```bash
+sha256sum -c tessera-0.1.0.jar.sha256
+java -jar tessera-0.1.0.jar check examples/Constants.tes
+```
+
+On macOS, use `shasum -a 256 -c tessera-0.1.0.jar.sha256` in place of
+`sha256sum`. The `examples` directory is included in the GitHub source archive.
+
+To build and test from source instead:
+
 ```bash
 sbt test
 ```
@@ -86,7 +100,8 @@ Current same-file declaration support:
 
 Current MVP `synth do` / `for` support:
 
-- `synth do { ... }` and `for { ... }` blocks with `param` and final `yield`
+- `synth do { ... }` and `for { ... }` blocks with `param`, `let`,
+  `name <- expression`, and final `yield`
 - tuple sugar `(e1, ..., eN)` for 2–10 elements, which lowers to the ordinary constructor `TupleN(e1, ..., eN)`; explicit `Pair` constructors remain available
 - `sbt "runMain tessera.Main show-synth <file.tes> [decl]"` prints the parsed synthesis block shape
 - `sbt "runMain tessera.Main show-desugared <file.tes> [decl]"` prints the elaborated lambda core

@@ -13,13 +13,15 @@
 - [x] Kernel vertical slice with closed term checking and basic definitional equality
 - [x] Elaborator bootstrap
 - [x] Synth combinator API
-- [x] `for`/`do`/`param` parser and desugaring (MVP `synth do` + `param` + `yield`; `for` block alias)
+- [x] `for`/`do` parser and desugaring (MVP `param`/`let`/bind/`yield`; `for` block alias)
 - [x] `trace-synth` command output
 - [x] CLI wire-up for `show-core`, `show-synth`, `show-desugared`, `trace-synth`
 - [x] `holes` command collects and prints unresolved holes in core declarations
 - [x] `eval` command evaluates a declaration or a one-shot term and prints normalized core
 - [x] structured `eval --trace` output for parse, elaboration, kernel, and normalization stages
 - [x] ordered same-file constants with immutable kernel environments and transparent delta reduction
+- [x] Java 17 executable JAR packaging with checksum and tag-driven GitHub Release workflow
+- [x] GitHub Actions CI for pull requests and main
 - [x] architecture-layer checks (kernel/core/meta import isolation via tests)
 - [x] Example corpus under `examples/` (MVP-compatible declarations; advanced forms as annotated placeholders)
 - [ ] LSP tooling
@@ -37,3 +39,5 @@
   import, recursion, or opacity system.
 - Current implementation is intentionally minimal and keeps proof search/continuation
   out of scope.
+- Release automation targets a portable JVM JAR only; native binaries,
+  installers, package-manager publication, signing, and Maven Central remain out of scope.

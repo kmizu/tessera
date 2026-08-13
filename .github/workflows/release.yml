@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: sbt
+      - name: Set up sbt
+        uses: sbt/setup-sbt@8feba82adc7f01ddcf8165b86f778bdb5b82cebc # v1.5.7
+      - name: Verify tag and project version
+        run: |
+          version="$(sbt --error 'print version' | tail -n 1)"
+          bash scripts/verify-release-tag.sh "$GITHUB_REF_NAME" "$version"
+      - name: Test release tag validator
+        run: bash src/test/sh/release-tag-test.sh
+      - name: Build and verify release assets
+        run: bash src/test/sh/release-artifact-test.sh
+      - name: Stage release assets
+        run: bash scripts/build-release.sh "$RUNNER_TEMP/tessera-release"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          asset_dir="$RUNNER_TEMP/tessera-release"
+          gh release create "$GITHUB_REF_NAME" \
+            "$asset_dir/tessera-$version.jar" \
+            "$asset_dir/tessera-$version.jar.sha256" \
+            --verify-tag \
+            --title "Tessera $GITHUB_REF_NAME" \
+            --notes-file docs/releases/v0.1.0.md
