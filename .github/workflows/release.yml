@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: write
-  checks: read
+  actions: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -48,11 +48,11 @@ jobs:
             echo "tagged commit $tagged_commit does not match workflow commit $GITHUB_SHA" >&2
             exit 1
           fi
-          ci_conclusion="$(gh api \
-            "/repos/$GITHUB_REPOSITORY/commits/$tagged_commit/check-runs?check_name=Java%2017%20test%20suite&filter=latest&per_page=1" \
-            --jq '.check_runs[0].conclusion // ""')"
-          if [[ "$ci_conclusion" != "success" ]]; then
-            echo "Java 17 CI is not green for release commit $tagged_commit" >&2
+          successful_runs="$(gh api \
+            "/repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&head_sha=$tagged_commit&per_page=1" \
+            --jq '.total_count')"
+          if [[ "$successful_runs" -lt 1 ]]; then
+            echo "successful main push CI run not found for $tagged_commit" >&2
             exit 1
           fi
       - name: Build and verify release assets

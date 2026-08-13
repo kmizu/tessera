@@ -82,7 +82,7 @@ JDK compatibility.
 ## Release Automation
 
 Add a release workflow triggered only by tags matching `v*`. It uses
-`contents: write` plus read-only check access and performs these stages in order:
+`contents: write` plus read-only Actions access and performs these stages in order:
 
 1. check out the exact tagged commit;
 2. verify the tag is `v0.1.0`-shaped and equals `v` plus the sbt project
