@@ -32,9 +32,7 @@ object KernelError:
       s"type mismatch: expected ${Printer.render(expected)}, found ${Printer.render(found)}"
 
   case class UnresolvedHole(name: String, expectedType: Option[Term]) extends KernelError:
-    override val message: String =
-      s"unresolved hole: ${name}" +
-        expectedType.fold("")(expected => s" : ${Printer.render(expected)}")
+    override val message: String = Printer.renderUnresolvedHole(name, expectedType)
 
   case class DeBruijnOutOfRange(index: Int) extends KernelError:
     override val message: String =
@@ -45,9 +43,27 @@ final case class KernelReport(errors: Vector[KernelError]):
 
 type KernelCheckResult = KernelReport
 
+object Kernel:
+  // Kept small enough that a diverging reduction hits the budget before the
+  // JVM stack overflows.
+  val DefaultNormalizationBudget: Int = 1000
+
+  private final class NormalizationBudget(limit: Int):
+    private var steps = 0
+    def spend(): Unit =
+      if limit >= 0 then
+        steps += 1
+        if steps > limit then throw new NormalizationBudget.ExhaustedException
+
+  private object NormalizationBudget:
+    final class ExhaustedException extends RuntimeException(null, null, false, false)
+    val unlimited: NormalizationBudget = new NormalizationBudget(-1)
+
 class Kernel(
   val environment: KernelEnvironment = KernelEnvironment.empty
 ):
+  import Kernel.NormalizationBudget
+
   def checkDecl(declarationType: Term, term: Term): KernelReport =
     check(term, declarationType, Vector.empty)
 
@@ -55,7 +71,7 @@ class Kernel(
     check(term, expected, Vector.empty)
 
   def check(term: Term, expected: Term, ctx: Vector[(String, Term)]): KernelReport =
-    validateConstants(Vector(term, expected) ++ ctx.map(_._2)) match
+    validateKernelInput(Vector(term, expected) ++ ctx.map(_._2)) match
       case Left(error) => KernelReport(Vector(error))
       case Right(_) =>
         checkWithContext(term, expected, ctx) match
@@ -63,15 +79,28 @@ class Kernel(
           case Left(error) => KernelReport(Vector(error))
 
   def infer(term: Term): Either[KernelError, Term] =
-    validateConstants(Vector(term)).flatMap(_ => inferType(term, Vector.empty))
+    validateKernelInput(Vector(term)).flatMap(_ => inferType(term, Vector.empty))
 
-  def normalize(term: Term): Term = normalize(term, Set.empty)
+  def normalize(term: Term): Term =
+    normalize(term, Set.empty, NormalizationBudget.unlimited)
 
+  // Bounded normalization for terms the kernel has not certified; returns
+  // None when the work budget runs out instead of diverging.
+  def normalizeWithBudget(
+    term: Term,
+    maxSteps: Int = Kernel.DefaultNormalizationBudget
+  ): Option[Term] =
+    // A non-positive budget is exhausted immediately, never unlimited.
+    try Some(normalize(term, Set.empty, new NormalizationBudget(maxSteps.max(0))))
+    catch case _: NormalizationBudget.ExhaustedException => None
+
+  // A definitional-equality judgement is only meaningful on valid kernel
+  // input; terms with holes or unknown constants are never equal.
   def isDefEq(left: Term, right: Term): Boolean =
-    normalize(left) == normalize(right)
+    validateKernelInput(Vector(left, right)).isRight && typesEqual(left, right)
 
   def checkSort(term: Term): Either[KernelError, Unit] =
-    checkSort(term, Vector.empty)
+    validateKernelInput(Vector(term)).flatMap(_ => checkSort(term, Vector.empty))
 
   def shift(term: Term, amount: Int, cutoff: Int = 0): Term =
     shiftByIndex(term, amount, cutoff)
@@ -79,67 +108,84 @@ class Kernel(
   def substitute(index: Int, replacement: Term, term: Term): Term =
     substituteByIndex(term, index, replacement, 0)
 
-  private def validateConstants(terms: Vector[Term]): Either[KernelError, Unit] =
+  private def validateKernelInput(terms: Vector[Term]): Either[KernelError, Unit] =
     terms.iterator
       .flatMap(TermAnalysis.collectConstants)
-      .find(name => !environment.contains(name))
-      .map(name => Left(KernelError.UndefinedConstant(name)))
-      .getOrElse(Right(()))
+      .find(name => !environment.contains(name)) match
+      case Some(name) => Left(KernelError.UndefinedConstant(name))
+      case None =>
+        terms.iterator.flatMap(TermAnalysis.collectHoles).nextOption() match
+          case Some(hole) => Left(KernelError.UnresolvedHole(hole.name, hole.expectedType))
+          case None => Right(())
 
-  private def normalize(term: Term, unfolding: Set[String]): Term = term match
+  private def normalize(
+    term: Term,
+    unfolding: Set[String],
+    budget: NormalizationBudget
+  ): Term = term match
     case Constant(name) if unfolding.contains(name) => Constant(name)
     case Constant(name) =>
       environment.lookup(name) match
-        case Some(declaration) => normalize(declaration.value, unfolding + name)
+        case Some(declaration) =>
+          budget.spend()
+          normalize(declaration.value, unfolding + name, budget)
         case None => Constant(name)
     case Hole(name, expectedType) =>
-      Hole(name, expectedType.map(normalize(_, unfolding)))
+      Hole(name, expectedType.map(normalize(_, unfolding, budget)))
     case App(function, argument) =>
       val (normalizedFunction, functionUnfolding) =
-        normalizeFunction(function, unfolding)
+        normalizeFunction(function, unfolding, budget)
       normalizedFunction match
         case Lambda(name, _, body) =>
+          budget.spend()
           normalize(
-            substituteByName(body, name, normalize(argument, unfolding)),
-            functionUnfolding
+            substituteByName(body, name, normalize(argument, unfolding, budget), budget),
+            functionUnfolding,
+            budget
           )
         case other =>
-          App(other, normalize(argument, unfolding))
+          App(other, normalize(argument, unfolding, budget))
     case Let(name, _, value, body) =>
-      normalize(substituteByName(body, name, value), unfolding)
+      budget.spend()
+      normalize(substituteByName(body, name, value, budget), unfolding, budget)
     case Pi(name, domain, codomain) =>
-      Pi(name, normalize(domain, unfolding), normalize(codomain, unfolding))
+      Pi(name, normalize(domain, unfolding, budget), normalize(codomain, unfolding, budget))
     case Lambda(name, paramType, body) =>
-      Lambda(name, normalize(paramType, unfolding), normalize(body, unfolding))
+      Lambda(name, normalize(paramType, unfolding, budget), normalize(body, unfolding, budget))
     case Constructor(name, fields) =>
-      Constructor(name, fields.map(normalize(_, unfolding)))
+      Constructor(name, fields.map(normalize(_, unfolding, budget)))
     case leaf @ (Sort(_) | Var(_) | DBVar(_) | Builtin(_) | UnitLit()) => leaf
 
   private def normalizeFunction(
     term: Term,
-    unfolding: Set[String]
+    unfolding: Set[String],
+    budget: NormalizationBudget
   ): (Term, Set[String]) = term match
     case Constant(name) if unfolding.contains(name) =>
       Constant(name) -> unfolding
     case Constant(name) =>
       environment.lookup(name) match
         case Some(declaration) =>
-          normalizeFunction(declaration.value, unfolding + name)
+          budget.spend()
+          normalizeFunction(declaration.value, unfolding + name, budget)
         case None => Constant(name) -> unfolding
     case Let(name, _, value, body) =>
-      normalizeFunction(substituteByName(body, name, value), unfolding)
+      budget.spend()
+      normalizeFunction(substituteByName(body, name, value, budget), unfolding, budget)
     case App(function, argument) =>
       val (normalizedFunction, functionUnfolding) =
-        normalizeFunction(function, unfolding)
+        normalizeFunction(function, unfolding, budget)
       normalizedFunction match
         case Lambda(name, _, body) =>
+          budget.spend()
           normalizeFunction(
-            substituteByName(body, name, normalize(argument, unfolding)),
-            functionUnfolding
+            substituteByName(body, name, normalize(argument, unfolding, budget), budget),
+            functionUnfolding,
+            budget
           )
         case other =>
-          App(other, normalize(argument, unfolding)) -> functionUnfolding
-    case other => normalize(other, unfolding) -> unfolding
+          App(other, normalize(argument, unfolding, budget)) -> functionUnfolding
+    case other => normalize(other, unfolding, budget) -> unfolding
 
   private def inferType(term: Term, ctx: Vector[(String, Term)]): Either[KernelError, Term] =
     term match
@@ -157,14 +203,18 @@ class Kernel(
           .toRight(KernelError.UndefinedConstant(name))
 
       case DBVar(index) =>
-        if index >= 0 && index < ctx.length then Right(ctx(index)._2)
+        // DBVar(0) is the innermost binder; ctx grows outermost-first. The
+        // stored type is shifted into the current scope.
+        if index >= 0 && index < ctx.length then
+          Right(shiftByIndex(ctx(ctx.length - 1 - index)._2, index + 1, 0))
         else Left(KernelError.DeBruijnOutOfRange(index))
 
       case Pi(name, domain, codomain) =>
+        val (freshCodomain, extendedCtx) = extendContext(name, domain, codomain, ctx)
         for
           _ <- checkSort(domain, ctx)
-          _ <- checkSort(codomain, ctx :+ (name, domain))
-          codomainSort <- inferType(codomain, ctx :+ (name, domain))
+          _ <- checkSort(freshCodomain, extendedCtx)
+          codomainSort <- inferType(freshCodomain, extendedCtx)
           _ <- ensureSort(codomainSort)
         yield codomainSort
 
@@ -175,31 +225,40 @@ class Kernel(
         inferType(function, ctx).map(normalize) match
           case Right(Pi(name, domain, codomain)) =>
             checkWithContext(argument, domain, ctx) match
-              case Right(_) => Right(substituteByName(codomain, name, argument))
+              case Right(_) =>
+                Right(substituteByName(codomain, name, argument, NormalizationBudget.unlimited))
               case Left(err) => Left(err)
           case Right(other) => Left(KernelError.NotAFunction(other))
           case Left(err) => Left(err)
 
       case Let(name, valueType, value, body) =>
+        val (freshBody, extendedCtx) = extendContext(name, valueType, body, ctx)
         for
           _ <- checkWithContext(value, valueType, ctx)
           _ <- checkWithContext(valueType, Sort(0), ctx)
-          checkedBody <- inferType(body, ctx :+ (name, valueType))
+          checkedBody <- inferType(freshBody, extendedCtx)
         yield checkedBody
 
-      case c: Constructor =>
-        Right(Sort(0))
+      case Constructor(_, fields) =>
+        // Fields must themselves be typable so an ill-typed or diverging term
+        // cannot hide inside an opaque constructor; the constructor itself
+        // stays typed Sort(0) under the MVP base-value rules.
+        fields
+          .foldLeft[Either[KernelError, Unit]](Right(())) { (accumulated, field) =>
+            accumulated.flatMap(_ => inferType(field, ctx).map(_ => ()))
+          }
+          .map(_ => Sort(0))
 
-      case Builtin(name) =>
-        Right(if name == "Unit" then Sort(0) else Sort(0))
+      case Builtin(_) =>
+        Right(Sort(0))
 
       case UnitLit() =>
         Right(Sort(0))
 
       case Hole(name, expectedType) =>
-        expectedType match
-          case Some(expected) => Right(expected)
-          case None => Right(Sort(0))
+        // Holes are rejected by the input preflight; refuse them here as well
+        // so no internal path can type a metavariable (invariant 2).
+        Left(KernelError.UnresolvedHole(name, expectedType))
 
   private def checkWithContext(term: Term, expectedTerm: Term, ctx: Vector[(String, Term)]): Either[KernelError, Unit] =
     val expected = normalize(expectedTerm)
@@ -207,15 +266,17 @@ class Kernel(
       case l: Lambda =>
         expected match
           case Pi(name, paramType, bodyType) =>
+            val (freshBody, extendedCtx) = extendContext(l.name, paramType, l.body, ctx)
+            val binder = extendedCtx.last._1
             for
               _ <- checkSort(l.paramType, ctx)
               _ <- checkSort(paramType, ctx)
-              _ <- if typesEqual(normalize(l.paramType), normalize(paramType)) then Right(())
+              _ <- if typesEqual(l.paramType, paramType) then Right(())
                 else Left(KernelError.NotTypeMismatch(paramType, l.paramType))
               _ <- checkWithContext(
-                l.body,
-                substituteByName(bodyType, name, Var(l.name)),
-                ctx :+ (l.name, paramType)
+                freshBody,
+                substituteByName(bodyType, name, Var(binder), NormalizationBudget.unlimited),
+                extendedCtx
               )
             yield ()
           case other =>
@@ -227,28 +288,20 @@ class Kernel(
           case other => Left(KernelError.NotTypeMismatch(other, s))
 
       case DBVar(index) =>
+        // DBVar(0) is the innermost binder; ctx grows outermost-first. The
+        // stored type is shifted into the current scope.
         if index >= 0 && index < ctx.length then
-          val foundType = ctx(index)._2
-          for
-            actual <- inferType(foundType, ctx)
-            expectedInferred <- inferType(expected, ctx)
-            _ <- if typesEqual(actual, expectedInferred) then Right(())
-              else Left(KernelError.NotTypeMismatch(expectedInferred, actual))
-          yield ()
+          val foundType = shiftByIndex(ctx(ctx.length - 1 - index)._2, index + 1, 0)
+          if typesEqual(foundType, expected) then Right(())
+          else Left(KernelError.NotTypeMismatch(expected, foundType))
         else
           Left(KernelError.DeBruijnOutOfRange(index))
 
       case Var(name) =>
         ctx.reverseIterator.find(_._1 == name) match
           case Some((_, foundType)) =>
-            inferType(foundType, ctx) match
-              case Right(actualType) =>
-                inferType(expected, ctx) match
-                  case Right(expectedType) =>
-                    if typesEqual(actualType, expectedType) then Right(())
-                    else Left(KernelError.NotTypeMismatch(expectedType, foundType))
-                  case Left(err) => Left(err)
-              case Left(err) => Left(err)
+            if typesEqual(foundType, expected) then Right(())
+            else Left(KernelError.NotTypeMismatch(expected, foundType))
           case None => Left(KernelError.UndefinedVariable(name))
 
       case constant @ Constant(_) =>
@@ -264,18 +317,20 @@ class Kernel(
           case Left(err) => Left(err)
 
       case p @ Pi(name, domain, codomain) =>
+        val (freshCodomain, extendedCtx) = extendContext(name, domain, codomain, ctx)
         for
           _ <- checkSort(domain, ctx)
-          _ <- checkSort(codomain, ctx :+ (name, domain))
+          _ <- checkSort(freshCodomain, extendedCtx)
           inferred <- inferType(p, ctx)
           _ <- if typesEqual(inferred, expected) then Right(()) else Left(KernelError.NotTypeMismatch(expected, inferred))
         yield ()
 
-      case l @ Let(name, valueType, value, body) =>
+      case Let(name, valueType, value, body) =>
+        val (freshBody, extendedCtx) = extendContext(name, valueType, body, ctx)
         for
           _ <- checkSort(valueType, ctx)
           _ <- checkWithContext(value, valueType, ctx)
-          _ <- checkWithContext(body, expected, ctx :+ (name, valueType))
+          _ <- checkWithContext(freshBody, expected, extendedCtx)
         yield ()
 
       case c @ Constructor(_, _) =>
@@ -310,30 +365,130 @@ class Kernel(
       case other => Left(KernelError.ExpectedSort(other))
 
   private def typesEqual(left: Term, right: Term): Boolean =
-    normalize(left) == normalize(right)
+    alphaEqual(normalize(left), normalize(right))
 
-  private def substituteByName(term: Term, name: String, replacement: Term): Term =
+  private def alphaEqual(left: Term, right: Term): Boolean =
+    def go(l: Term, r: Term, leftNames: List[String], rightNames: List[String]): Boolean =
+      (l, r) match
+        case (Var(a), Var(b)) =>
+          val leftIndex = leftNames.indexOf(a)
+          val rightIndex = rightNames.indexOf(b)
+          if leftIndex >= 0 || rightIndex >= 0 then leftIndex == rightIndex else a == b
+        case (Sort(a), Sort(b)) => a == b
+        case (Constant(a), Constant(b)) => a == b
+        case (DBVar(a), DBVar(b)) => a == b
+        case (Pi(ln, ld, lc), Pi(rn, rd, rc)) =>
+          go(ld, rd, leftNames, rightNames) && go(lc, rc, ln :: leftNames, rn :: rightNames)
+        case (Lambda(ln, lt, lb), Lambda(rn, rt, rb)) =>
+          go(lt, rt, leftNames, rightNames) && go(lb, rb, ln :: leftNames, rn :: rightNames)
+        case (Let(ln, lvt, lv, lb), Let(rn, rvt, rv, rb)) =>
+          go(lvt, rvt, leftNames, rightNames) &&
+            go(lv, rv, leftNames, rightNames) &&
+            go(lb, rb, ln :: leftNames, rn :: rightNames)
+        case (App(lf, la), App(rf, ra)) =>
+          go(lf, rf, leftNames, rightNames) && go(la, ra, leftNames, rightNames)
+        case (Constructor(lname, lfields), Constructor(rname, rfields)) =>
+          lname == rname && lfields.length == rfields.length &&
+            lfields.lazyZip(rfields).forall((lf, rf) => go(lf, rf, leftNames, rightNames))
+        case (Builtin(a), Builtin(b)) => a == b
+        case (UnitLit(), UnitLit()) => true
+        case (Hole(ln, lt), Hole(rn, rt)) =>
+          ln == rn && ((lt, rt) match
+            case (Some(a), Some(b)) => go(a, b, leftNames, rightNames)
+            case (None, None) => true
+            case _ => false)
+        case _ => false
+    go(left, right, Nil, Nil)
+
+  // Keeps context binder names unique: a shadowing binder is renamed (and its
+  // body occurrences with it) before extension, so a stored context type can
+  // never alias a later binder of the same name.
+  private def extendContext(
+    binder: String,
+    binderType: Term,
+    body: Term,
+    ctx: Vector[(String, Term)]
+  ): (Term, Vector[(String, Term)]) =
+    if ctx.exists(_._1 == binder) then
+      val avoid = ctx.map(_._1).toSet ++
+        TermAnalysis.variableNames(body) ++
+        TermAnalysis.variableNames(binderType) + binder
+      val fresh = freshName(binder, avoid)
+      (
+        substituteByName(body, binder, Var(fresh), NormalizationBudget.unlimited),
+        ctx :+ (fresh, binderType)
+      )
+    else (body, ctx :+ (binder, binderType))
+
+  private def freshName(base: String, avoid: Set[String]): String =
+    Iterator
+      .from(1)
+      .map(index => s"$base$$$index")
+      .find(candidate => !avoid.contains(candidate))
+      .get
+
+  // Renames `binder` when it would capture a free variable of `replacement`.
+  // The avoid set includes `substituted` (the variable currently being
+  // replaced) so a fresh name can never be substituted away again downstream.
+  private def avoidCapture(
+    binder: String,
+    body: Term,
+    replacement: Term,
+    substituted: String,
+    budget: NormalizationBudget
+  ): (String, Term) =
+    if TermAnalysis.freeVars(replacement).contains(binder) then
+      val avoid =
+        TermAnalysis.variableNames(replacement) ++
+          TermAnalysis.variableNames(body) + binder + substituted
+      val fresh = freshName(binder, avoid)
+      (fresh, substituteByName(body, binder, Var(fresh), budget))
+    else (binder, body)
+
+  // Spends one budget unit per visited node so bounded normalization also
+  // bounds the total work of size-exploding substitutions, not just the
+  // number of reduction steps.
+  private def substituteByName(
+    term: Term,
+    name: String,
+    replacement: Term,
+    budget: NormalizationBudget
+  ): Term =
+    budget.spend()
     term match
-      case h @ Hole(holeName, expectedType) =>
-        Hole(holeName, expectedType.map(substituteByName(_, name, replacement)))
+      case Hole(holeName, expectedType) =>
+        Hole(holeName, expectedType.map(substituteByName(_, name, replacement, budget)))
       case s @ Sort(_) => s
       case constant @ Constant(_) => constant
       case v @ Var(current) =>
         if current == name then replacement else v
       case DBVar(index) => DBVar(index)
-      case p @ Pi(current, domain, codomain) =>
-        val nextCodomain = if current == name then codomain else substituteByName(codomain, name, replacement)
-        Pi(current, substituteByName(domain, name, replacement), nextCodomain)
-      case l @ Lambda(current, paramType, body) =>
-        val nextBody = if current == name then body else substituteByName(body, name, replacement)
-        Lambda(current, substituteByName(paramType, name, replacement), nextBody)
+      case Pi(current, domain, codomain) =>
+        val nextDomain = substituteByName(domain, name, replacement, budget)
+        if current == name then Pi(current, nextDomain, codomain)
+        else
+          val (binder, adjusted) = avoidCapture(current, codomain, replacement, name, budget)
+          Pi(binder, nextDomain, substituteByName(adjusted, name, replacement, budget))
+      case Lambda(current, paramType, body) =>
+        val nextParamType = substituteByName(paramType, name, replacement, budget)
+        if current == name then Lambda(current, nextParamType, body)
+        else
+          val (binder, adjusted) = avoidCapture(current, body, replacement, name, budget)
+          Lambda(binder, nextParamType, substituteByName(adjusted, name, replacement, budget))
       case Let(current, valueType, value, body) =>
-        val nextBody = if current == name then body else substituteByName(body, name, replacement)
-        Let(current, substituteByName(valueType, name, replacement), substituteByName(value, name, replacement), nextBody)
+        val nextValueType = substituteByName(valueType, name, replacement, budget)
+        val nextValue = substituteByName(value, name, replacement, budget)
+        if current == name then Let(current, nextValueType, nextValue, body)
+        else
+          val (binder, adjusted) = avoidCapture(current, body, replacement, name, budget)
+          Let(binder, nextValueType, nextValue, substituteByName(adjusted, name, replacement, budget))
       case App(function, argument) =>
-        App(substituteByName(function, name, replacement), substituteByName(argument, name, replacement))
+        App(
+          substituteByName(function, name, replacement, budget),
+          substituteByName(argument, name, replacement, budget)
+        )
       case Constructor(constructorName, fields) =>
-        Constructor(constructorName, fields.map(substituteByName(_, name, replacement)))
+        Constructor(constructorName, fields.map(substituteByName(_, name, replacement, budget)))
       case b @ Builtin(_) => b
       case UnitLit() => UnitLit()
 
@@ -398,6 +553,9 @@ class Kernel(
       case UnitLit() => UnitLit()
 
 object Printer:
+  def renderUnresolvedHole(name: String, expectedType: Option[Term]): String =
+    s"unresolved hole: $name" + expectedType.fold("")(expected => s" : ${render(expected)}")
+
   def render(term: Term): String = term match
     case Sort(level) => s"Type[$level]"
     case DBVar(index) => s"#$index"

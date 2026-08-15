@@ -252,12 +252,19 @@ class CommandsTest extends FunSuite:
       TesseraCli.main(Array("eval", "--trace", path.toString, "alias"))
     }
 
-    assert(output.contains("  parsed: id\n"))
-    assert(output.contains("  core: id\n"))
-    assert(output.contains("  kernel: OK\n"))
-    assert(output.contains(
-      "  normalized: (lambda A: Type[0] => (lambda x: A => x))\n"
-    ))
+    assertEquals(
+      output,
+      s"""eval trace:
+         |  file: $path
+         |  target: alias
+         |  kind: declaration
+         |  parsed: id
+         |  core: id
+         |  expected: (A: Type[0]) -> (x: A) -> A
+         |  kernel: OK
+         |  normalized: (lambda A: Type[0] => (lambda x: A => x))
+         |""".stripMargin
+    )
   }
 
   test("eval does not normalize a rejected declaration or unknown inline constant") {
@@ -266,18 +273,85 @@ class CommandsTest extends FunSuite:
         |def ok : (Sort 0) = (Sort 0)""".stripMargin
     )
 
+    var rejectedCode = -1
     val rejected = withCapturedOut {
-      TesseraCli.main(Array("eval", path.toString, "bad"))
+      rejectedCode = TesseraCli.run(List("eval", path.toString, "bad"))
     }
+    var unknownCode = -1
     val unknown = withCapturedOut {
-      TesseraCli.main(Array("eval", path.toString, "anotherMissing"))
+      unknownCode = TesseraCli.run(List("eval", path.toString, "anotherMissing"))
     }
 
     assertEquals(rejected, "bad: FAIL\n  undefined constant: missing\n")
+    assertEquals(rejectedCode, 1)
     assertEquals(
       unknown,
       "unknown declaration or evaluation error: undefined constant: anotherMissing\n"
     )
+    assertEquals(unknownCode, 1)
+  }
+
+  test("run returns exit code 1 when check finds failures and 0 otherwise") {
+    val failing = writeExample("def bad : (Sort 0) = missing")
+    var failCode = -1
+    val failOutput = withCapturedOut {
+      failCode = TesseraCli.run(List("check", failing.toString))
+    }
+    assertEquals(failCode, 1)
+    assertEquals(failOutput, "bad: FAIL\n  undefined constant: missing\n")
+
+    val ok = writeExample(constantsSource)
+    var okCode = -1
+    val okOutput = withCapturedOut {
+      okCode = TesseraCli.run(List("check", ok.toString))
+    }
+    assertEquals(okCode, 0)
+    assertEquals(okOutput, "id: OK\nalias: OK\n")
+  }
+
+  test("check exits nonzero on a module parse error") {
+    val broken = writeExample("def broken :")
+    var code = -1
+    val output = withCapturedOut {
+      code = TesseraCli.run(List("check", broken.toString))
+    }
+    assertEquals(code, 1)
+    assert(output.startsWith("parse error: "))
+  }
+
+  test("eval reports a module parse failure without a trace and exits nonzero") {
+    val broken = writeExample("def broken :")
+    var code = -1
+    val output = withCapturedOut {
+      code = TesseraCli.run(List("eval", broken.toString, "x"))
+    }
+    assert(output.startsWith("parse error: "))
+    assertEquals(code, 1)
+  }
+
+  test("check with extra arguments prints usage instead of running another command") {
+    val path = writeExample(constantsSource)
+    var code = -1
+    val output = withCapturedOut {
+      code = TesseraCli.run(List("check", path.toString, "extra"))
+    }
+    assertEquals(output, "usage: tessera check <file.tes>\n")
+    assertEquals(code, 0)
+  }
+
+  test("eval prints a budget message instead of diverging on unchecked loops") {
+    val omega = "(App (Lam x (Sort 0) (App (Var x) (Var x))) (Lam x (Sort 0) (App (Var x) (Var x))))"
+    val path = writeExample(s"def loop = (Lam q (Sort 0) $omega)")
+
+    val declOutput = withCapturedOut {
+      TesseraCli.main(Array("eval", path.toString, "loop"))
+    }
+    assertEquals(declOutput, "<normalization budget exhausted>\n")
+
+    val inlineOutput = withCapturedOut {
+      TesseraCli.main(Array("eval", path.toString, omega))
+    }
+    assertEquals(inlineOutput, "<normalization budget exhausted>\n")
   }
 
   test("eval trace stops before normalizing an unknown inline constant") {

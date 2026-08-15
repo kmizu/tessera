@@ -12,7 +12,9 @@ lazy val root = (project in file("."))
     scalacOptions ++= Seq(
       "-deprecation",
       "-feature",
-      "-unchecked"
+      "-unchecked",
+      "-Wunused:all",
+      "-Xfatal-warnings"
     ),
     libraryDependencies += "org.scalameta" %% "munit" % "1.0.4" % Test
   )

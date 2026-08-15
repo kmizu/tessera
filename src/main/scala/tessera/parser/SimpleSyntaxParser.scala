@@ -383,13 +383,6 @@ object SimpleSyntaxParser:
       case Some(other) => Left(UnexpectedToken(s"expected '=', found $other", cursor.pos))
       case None => Left(UnexpectedEof(cursor.pos))
 
-  private def expectRParen(cursor: Cursor): Either[ParseError, Unit] =
-    skipWhitespaceLike(cursor)
-    cursor.consume() match
-      case Some(RParen) => Right(())
-      case Some(other) => Left(UnexpectedToken(s"expected ')', found $other", cursor.pos))
-      case None => Left(UnexpectedEof(cursor.pos))
-
   private def skipWhitespaceLike(cursor: Cursor): Unit =
     while cursor.peekOption.contains(WhitespaceLike) do
       cursor.next()

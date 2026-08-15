@@ -8,13 +8,51 @@ final class ArchitectureTest extends FunSuite:
   private val projectRoot = Paths.get(".").toAbsolutePath.normalize
   private val mainSrc = projectRoot.resolve("src/main/scala")
 
+  // Directory -> packages its files must never reference. Matching is on the
+  // bare package name so both imports and fully-qualified references count.
+  private val layerRules: Seq[(String, Seq[String])] = Seq(
+    "tessera/core" -> Seq(
+      "tessera.kernel",
+      "tessera.parser",
+      "tessera.elab",
+      "tessera.meta",
+      "tessera.compiler",
+      "tessera.cli"
+    ),
+    "tessera/kernel" -> Seq(
+      "tessera.parser",
+      "tessera.elab",
+      "tessera.meta",
+      "tessera.compiler",
+      "tessera.cli"
+    ),
+    "tessera/meta" -> Seq(
+      "tessera.parser",
+      "tessera.elab",
+      "tessera.compiler",
+      "tessera.cli"
+    ),
+    "tessera/parser" -> Seq(
+      "tessera.elab",
+      "tessera.meta",
+      "tessera.compiler",
+      "tessera.cli"
+    ),
+    "tessera/elab" -> Seq(
+      "tessera.meta",
+      "tessera.compiler",
+      "tessera.cli"
+    ),
+    "tessera/compiler" -> Seq(
+      "tessera.cli"
+    )
+  )
+
   private def readText(path: String): String =
     Source.fromFile(path).mkString
 
-  private def forbiddenImports(source: String, forbiddens: Seq[String]): Seq[String] =
-    forbiddens.collect { phrase =>
-      if source.contains(phrase) then s"contains forbidden reference: $phrase" else ""
-    }.filter(_.nonEmpty)
+  private def forbiddenReferences(source: String, forbiddens: Seq[String]): Seq[String] =
+    forbiddens.filter(source.contains).map(phrase => s"contains forbidden reference: $phrase")
 
   private def readScalaFiles(directory: String): Vector[String] =
     val dir = mainSrc.resolve(directory).toFile
@@ -27,84 +65,18 @@ final class ArchitectureTest extends FunSuite:
         .collect { case p: java.nio.file.Path if p.toString.endsWith(".scala") => p.toString }
         .toVector
 
-  test("kernel must not depend on parser/elab/meta/control packages") {
-    val kernelFiles = readScalaFiles("tessera/kernel")
-    assert(kernelFiles.nonEmpty)
-
-    kernelFiles.foreach { path =>
-      val source = readText(path)
-      val issues = forbiddenImports(
-        source,
-        Seq(
-          "tessera.parser",
-          "tessera.elab",
-          "tessera.meta",
-          "tessera.compiler",
-          "tessera.cli"
-        )
-      )
-      assertEquals(
-        issues,
-        Vector.empty,
-        s"kernel file $path violates layering: ${issues.mkString(", ")}"
-      )
-    }
-  }
-
-  test("core should remain layer-independent of parser/elab/meta/cli") {
-    val coreFiles = readScalaFiles("tessera/core")
-    assert(coreFiles.nonEmpty)
-
-    coreFiles.foreach { path =>
-      val source = readText(path)
-      val issues = forbiddenImports(
-        source,
-        Seq(
-          "import tessera.parser",
-          "import tessera.elab",
-          "import tessera.meta",
-          "import tessera.compiler",
-          "import tessera.cli"
-        )
-      )
-      assertEquals(
-        issues,
-        Vector.empty,
-        s"core file $path violates layering: ${issues.mkString(", ")}"
-      )
-    }
-  }
-
-  test("meta layer must not import parser/elab/cli internals directly") {
-    val metaFiles = readScalaFiles("tessera/meta")
-    assert(metaFiles.nonEmpty)
-
-    metaFiles.foreach { path =>
-      val source = readText(path)
-      val issues = forbiddenImports(
-        source,
-        Seq(
-          "import tessera.parser",
-          "import tessera.elab",
-          "import tessera.compiler",
-          "import tessera.cli"
-        )
-      )
-      assertEquals(
-        issues,
-        Vector.empty,
-        s"meta file $path violates layering: ${issues.mkString(", ")}"
-      )
-    }
-  }
-
-  test("parser and elaboration layers must not depend on compiler orchestration") {
-    Vector("tessera/parser", "tessera/elab").foreach { directory =>
+  layerRules.foreach { (directory, forbiddens) =>
+    test(s"$directory must not reference ${forbiddens.mkString(", ")}") {
       val files = readScalaFiles(directory)
-      assert(files.nonEmpty)
+      assert(files.nonEmpty, s"no Scala files found under $directory")
+
       files.foreach { path =>
-        val issues = forbiddenImports(readText(path), Seq("import tessera.compiler"))
-        assertEquals(issues, Vector.empty, s"lower-layer file $path violates layering")
+        val issues = forbiddenReferences(readText(path), forbiddens)
+        assertEquals(
+          issues,
+          Seq.empty,
+          s"file $path violates layering: ${issues.mkString(", ")}"
+        )
       }
     }
   }

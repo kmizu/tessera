@@ -2,7 +2,7 @@ package tessera.meta
 
 import tessera.core.Term
 import tessera.core.Term.*
-import tessera.kernel.{Kernel, Printer}
+import tessera.kernel.{Kernel, KernelEnvironment, Printer}
 
 type Context = Vector[(String, Term)]
 type Goal[A] = Term
@@ -67,8 +67,6 @@ final class Synth private (private val run: Context => SearchResult[Term], priva
     Synth.choose(this, fallback)
 
 object Synth:
-  private val defaultKernel = Kernel()
-
   def fn(name: String, paramType: Term)(body: String => Synth): Synth =
     new Synth(ctx =>
       val nested = body(name).execute(ctx :+ (name, paramType))
@@ -240,16 +238,31 @@ object Synth:
     def flatMapSynth(next: Term => Synth): Synth = self.flatMap(next)
     def orElseSynth(fallback: => Synth): Synth = self.orElse(fallback)
 
-  def derive(source: Synth, expectedType: Option[Term] = None): SearchResult[Term] =
+  def derive(
+    source: Synth,
+    expectedType: Option[Term] = None,
+    environment: KernelEnvironment = KernelEnvironment.empty,
+    maxNormalizationSteps: Int = Kernel.DefaultNormalizationBudget
+  ): SearchResult[Term] =
+    val kernel = Kernel(environment)
     source.execute(Vector.empty) match
       case SearchResult.Success(term, trace) =>
         expectedType match
           case None =>
-            SearchResult.Success(defaultKernel.normalize(term), trace :+ "derive")
+            // No expected type means no kernel certificate; normalize under a
+            // budget so a diverging synthesized term surfaces as a failure.
+            kernel.normalizeWithBudget(term, maxNormalizationSteps) match
+              case Some(normalized) =>
+                SearchResult.Success(normalized, trace :+ "derive")
+              case None =>
+                SearchResult.Failure(
+                  "normalization budget exhausted for unchecked derivation",
+                  trace :+ "derive"
+                )
           case Some(expected) =>
-            val checkResult = defaultKernel.check(term, expected)
+            val checkResult = kernel.check(term, expected)
             if checkResult.isOk then
-              SearchResult.Success(defaultKernel.normalize(term), trace :+ "derive" :+ "kernel check ok")
+              SearchResult.Success(kernel.normalize(term), trace :+ "derive" :+ "kernel check ok")
             else
               SearchResult.Failure(
                 s"generated term rejected by kernel: " + checkResult.errors.map(_.message).mkString("; "),

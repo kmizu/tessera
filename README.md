@@ -72,12 +72,12 @@ Example corpus:
 - `examples/AndOr.tes`
 - `examples/Nat.tes`
 - `examples/Equality.tes`
-- `examples/Holes.tes`
+- `examples/Holes.tes` (expected-fail for `check`: keeps unresolved holes to showcase the `holes` command)
 - `examples/SynthesisExplicit.tes`
 - `examples/SynthesisFor.tes`
 - `examples/SynthesisDo.tes`
 - `examples/SynthesisParam.tes`
-- `examples/SynthesisFailure.tes`
+- `examples/SynthesisFailure.tes` (expected-fail for `check`: keeps an unresolved hole to show failure output)
 - `examples/SynthesisBranching.tes`
 - `examples/Constants.tes`
 

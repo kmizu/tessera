@@ -17,13 +17,16 @@ object ModuleDiagnostic:
 
   final case class UnresolvedHole(hole: Term.Hole) extends ModuleDiagnostic:
     override val message: String =
-      KernelError.UnresolvedHole(hole.name, hole.expectedType).message
+      Printer.renderUnresolvedHole(hole.name, hole.expectedType)
 
   final case class KernelFailure(error: KernelError) extends ModuleDiagnostic:
-    override def message: String = error.message
+    override val message: String = error.message
+
+  final case class EnvironmentFailure(error: KernelEnvironmentError) extends ModuleDiagnostic:
+    override val message: String = error.message
 
   final case class ElaborationFailure(detail: String) extends ModuleDiagnostic:
-    override def message: String = s"elaboration failed: $detail"
+    override val message: String = s"elaboration failed: $detail"
 
 final case class DeclarationOutcome(
   declaration: ParsedDeclaration,
@@ -34,7 +37,6 @@ final case class DeclarationOutcome(
   diagnostics: Vector[ModuleDiagnostic]
 ):
   def name: String = declaration.name
-  def effectiveType: Option[Term] = declaredType.orElse(inferredType)
 
 final case class CheckedModule(
   outcomes: Vector[DeclarationOutcome],
@@ -86,64 +88,89 @@ object ModuleChecker:
             )
           )
         case Right(elaborated) =>
-          val holes =
-            elaborated.declaredType.toVector.flatMap(TermAnalysis.collectHoles) ++
-              TermAnalysis.collectHoles(elaborated.core)
-          if holes.nonEmpty then
-            append(
-              marked,
-              resolvedOutcome(
-                declaration,
-                elaborated,
-                DeclarationStatus.Rejected,
-                None,
-                holes.map(ModuleDiagnostic.UnresolvedHole.apply)
-              )
-            )
-          else
-            val kernel = Kernel(marked.environment)
-            elaborated.declaredType match
-              case Some(expected) =>
-                val report = kernel.check(elaborated.core, expected)
-                if report.isOk then register(marked, declaration, elaborated, expected, None)
-                else
-                  append(
-                    marked,
-                    resolvedOutcome(
-                      declaration,
-                      elaborated,
-                      DeclarationStatus.Rejected,
-                      None,
-                      report.errors.map(ModuleDiagnostic.KernelFailure.apply)
-                    )
-                  )
-              case None =>
-                kernel.infer(elaborated.core) match
-                  case Right(inferred) =>
-                    register(marked, declaration, elaborated, inferred, Some(inferred))
-                  case Left(error @ KernelError.CannotInferLambda(_))
-                      if elaborated.core.isInstanceOf[Term.Lambda] =>
-                    append(
-                      marked,
-                      resolvedOutcome(
-                        declaration,
-                        elaborated,
-                        DeclarationStatus.Unchecked,
-                        None,
-                        Vector(ModuleDiagnostic.KernelFailure(error))
-                      )
-                    )
-                  case Left(error) =>
-                    append(
-                      marked,
-                      resolvedOutcome(
-                        declaration,
-                        elaborated,
-                        DeclarationStatus.Rejected,
-                        None,
-                        Vector(ModuleDiagnostic.KernelFailure(error))
-                      )
-                    )
+          checkElaborated(marked, declaration, elaborated)
+
+  private def checkElaborated(
+    state: State,
+    declaration: ParsedDeclaration,
+    elaborated: ElaboratedDeclaration
+  ): State =
+    val holes =
+      elaborated.declaredType.toVector.flatMap(TermAnalysis.collectHoles) ++
+        TermAnalysis.collectHoles(elaborated.core)
+    if holes.nonEmpty then
+      append(
+        state,
+        resolvedOutcome(
+          declaration,
+          elaborated,
+          DeclarationStatus.Rejected,
+          None,
+          holes.map(ModuleDiagnostic.UnresolvedHole.apply)
+        )
+      )
+    else
+      val kernel = Kernel(state.environment)
+      elaborated.declaredType match
+        case Some(expected) => checkAnnotated(state, declaration, elaborated, kernel, expected)
+        case None => checkUnannotated(state, declaration, elaborated, kernel)
+
+  private def checkAnnotated(
+    state: State,
+    declaration: ParsedDeclaration,
+    elaborated: ElaboratedDeclaration,
+    kernel: Kernel,
+    expected: Term
+  ): State =
+    val report = kernel.check(elaborated.core, expected)
+    if report.isOk then register(state, declaration, elaborated, expected, None)
+    else
+      append(
+        state,
+        resolvedOutcome(
+          declaration,
+          elaborated,
+          DeclarationStatus.Rejected,
+          None,
+          report.errors.map(ModuleDiagnostic.KernelFailure.apply)
+        )
+      )
+
+  private def checkUnannotated(
+    state: State,
+    declaration: ParsedDeclaration,
+    elaborated: ElaboratedDeclaration,
+    kernel: Kernel
+  ): State =
+    kernel.infer(elaborated.core) match
+      case Right(inferred) =>
+        register(state, declaration, elaborated, inferred, Some(inferred))
+      case Left(error @ KernelError.CannotInferLambda(_))
+          if elaborated.core.isInstanceOf[Term.Lambda] =>
+        // Only an outermost unannotated lambda is safely "unchecked"; a
+        // CannotInferLambda from deeper inside a term may mask a genuine
+        // type error, so those reject.
+        append(
+          state,
+          resolvedOutcome(
+            declaration,
+            elaborated,
+            DeclarationStatus.Unchecked,
+            None,
+            Vector(ModuleDiagnostic.KernelFailure(error))
+          )
+        )
+      case Left(error) =>
+        append(
+          state,
+          resolvedOutcome(
+            declaration,
+            elaborated,
+            DeclarationStatus.Rejected,
+            None,
+            Vector(ModuleDiagnostic.KernelFailure(error))
+          )
+        )
 
   private def register(
     state: State,
@@ -166,7 +193,7 @@ object ModuleChecker:
             Vector.empty
           )
         )
-      case Left(_) =>
+      case Left(error) =>
         append(
           state,
           resolvedOutcome(
@@ -174,7 +201,7 @@ object ModuleChecker:
             elaborated,
             DeclarationStatus.Rejected,
             inferredType,
-            Vector(ModuleDiagnostic.DuplicateDeclaration(declaration.name))
+            Vector(ModuleDiagnostic.EnvironmentFailure(error))
           )
         )
 

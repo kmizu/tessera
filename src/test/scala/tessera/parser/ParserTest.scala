@@ -11,6 +11,9 @@ import SimpleSyntaxParser.ParsedBind
 import java.nio.file.{Files, Paths}
 
 class ParserTest extends FunSuite:
+  private def rightOrFail[L, R](result: Either[L, R]): R =
+    result.fold(error => fail(s"expected Right, got Left($error)"), identity)
+
   test("parser reads a declaration module and terms") {
     val source =
       """
@@ -20,7 +23,7 @@ class ParserTest extends FunSuite:
     val parsed = SimpleSyntaxParser.parseModule(source)
 
     assert(parsed.isRight, parsed.fold(_.toString, _ => ""))
-    val Right(decls) = parsed
+    val decls = rightOrFail(parsed)
     assertEquals(decls.size, 1)
     val decl = decls.head
     assertEquals(decl.name, "id")
@@ -36,7 +39,7 @@ class ParserTest extends FunSuite:
     val parsed = SimpleSyntaxParser.parseModule(source)
 
     assert(parsed.isRight, parsed.fold(_.toString, _ => ""))
-    val Right(decls) = parsed
+    val decls = rightOrFail(parsed)
     val decl = decls.head
     assertEquals(decl.name, "pair")
   }
@@ -54,7 +57,7 @@ class ParserTest extends FunSuite:
     val parsed = SimpleSyntaxParser.parseModule(source)
 
     assert(parsed.isRight, parsed.fold(_.toString, _ => ""))
-    val Right(decls) = parsed
+    val decls = rightOrFail(parsed)
     assertEquals(decls.size, 1)
     val decl = decls.head
     assertEquals(decl.name, "andIntro")
@@ -86,8 +89,8 @@ class ParserTest extends FunSuite:
   }
 
   test("parser accepts arbitrary terms inside tuple syntax") {
-    val Right(term) = SimpleSyntaxParser.parseTermFromSource(
-      "((Ctor F (Var x)), (App (Var f) (Var x)))"
+    val term = rightOrFail(
+      SimpleSyntaxParser.parseTermFromSource("((Ctor F (Var x)), (App (Var f) (Var x)))")
     )
     assertEquals(
       term,
@@ -102,7 +105,7 @@ class ParserTest extends FunSuite:
   }
 
   test("parser supports nested tuple syntax") {
-    val Right(term) = SimpleSyntaxParser.parseTermFromSource("((A, B), C)")
+    val term = rightOrFail(SimpleSyntaxParser.parseTermFromSource("((A, B), C)"))
     assertEquals(
       term,
       Constructor(
@@ -138,7 +141,7 @@ class ParserTest extends FunSuite:
     val parsed = SimpleSyntaxParser.parseModule(source)
 
     assert(parsed.isRight, parsed.fold(_.toString, _ => ""))
-    val Right(decls) = parsed
+    val decls = rightOrFail(parsed)
     assertEquals(decls.size, 1)
     val decl = decls.head
     assertEquals(decl.name, "forIntro")
@@ -164,7 +167,7 @@ class ParserTest extends FunSuite:
     val parsed = SimpleSyntaxParser.parseModule(source)
 
     assert(parsed.isRight, parsed.fold(_.toString, _ => ""))
-    val Right(decls) = parsed
+    val decls = rightOrFail(parsed)
     assertEquals(decls.size, 1)
     val decl = decls.head
     assertEquals(decl.name, "andIntro")
@@ -188,7 +191,7 @@ class ParserTest extends FunSuite:
     val parsed = SimpleSyntaxParser.parseModule(source)
 
     assert(parsed.isRight, parsed.fold(_.toString, _ => ""))
-    val Right(decls) = parsed
+    val decls = rightOrFail(parsed)
     assertEquals(decls.size, 2)
 
     decls.head.value match
@@ -205,7 +208,7 @@ class ParserTest extends FunSuite:
   }
 
   test("parseTermFromSource parses full term and rejects trailing tokens") {
-    val Right(term) = SimpleSyntaxParser.parseTermFromSource("(App (Var f) (Var x))")
+    val term = rightOrFail(SimpleSyntaxParser.parseTermFromSource("(App (Var f) (Var x))"))
     assertEquals(term, App(Var("f"), Var("x")))
 
     val errorResult = SimpleSyntaxParser.parseTermFromSource("(App (Var f) (Var x)) extra")

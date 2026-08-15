@@ -24,6 +24,11 @@
 - [x] GitHub Actions CI for pull requests and main
 - [x] architecture-layer checks (kernel/core/meta import isolation via tests)
 - [x] Example corpus under `examples/` (MVP-compatible declarations; advanced forms as annotated placeholders)
+- [x] Kernel soundness hardening: variable checking compares types (not sorts),
+  capture-avoiding substitution, alpha-insensitive definitional equality,
+  kernel-level hole rejection, acyclic-by-construction environments, and
+  budget-bounded normalization for unchecked terms
+- [x] Compiler warnings promoted to errors (`-Wunused:all -Xfatal-warnings`)
 - [ ] LSP tooling
 
 ## Notes
@@ -37,7 +42,17 @@
 - This phase focuses on Phase 0 and a narrow executable kernel subset.
 - Same-file constants cover only earlier accepted declarations; this is not a general module,
   import, recursion, or opacity system.
+- Universe levels are not yet constrained (ADR-01): any sort checks against any
+  sort, so `def a : (Sort 0) = (Sort 5)` is accepted and pinned by tests.
+- `synth do` `let`/`<-` values are elaborated with a hardcoded `Sort 0` value
+  type, so only `Sort(0)`-typed values (e.g. constructors) check; this limit is
+  pinned by a `ModuleCheckerTest` case.
 - Current implementation is intentionally minimal and keeps proof search/continuation
   out of scope.
 - Release automation targets a portable JVM JAR only; native binaries,
-  installers, package-manager publication, signing, and Maven Central remain out of scope.
+  installers, package-manager publication, and Maven Central remain out of scope.
+- Repository-side release protection is active: a `release-tags` ruleset on
+  `v*` tags (required signatures, no deletion, no force-push) and a `release`
+  deployment environment whose reviewer approval gates the publish job.
+  Release tags must be signed (`tag.gpgsign` is enabled in-repo; the SSH
+  signing key must be registered on GitHub as a signing key).
