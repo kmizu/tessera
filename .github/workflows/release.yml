@@ -38,7 +38,7 @@ jobs:
         uses: sbt/setup-sbt@8feba82adc7f01ddcf8165b86f778bdb5b82cebc # v1.5.7
       - name: Verify tag and project version
         run: |
-          version="$(sbt --error 'print version' | tail -n 1)"
+          version="$(bash scripts/project-version.sh)"
           bash scripts/verify-release-tag.sh "$GITHUB_REF_NAME" "$version"
       - name: Test release tag validator
         run: bash src/test/sh/release-tag-test.sh

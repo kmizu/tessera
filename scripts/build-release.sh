@@ -21,12 +21,7 @@ fi
 cd "$repo_root"
 mkdir -p "$output_dir"
 
-version="$(sbt --error 'print version' | tail -n 1)"
-stable_semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-if [[ ! "$version" =~ $stable_semver ]]; then
-  echo "unexpected project version: $version" >&2
-  exit 1
-fi
+version="$(bash "$repo_root/scripts/project-version.sh")"
 artifact_name="tessera-$version.jar"
 artifact="$output_dir/$artifact_name"
 checksum="$artifact.sha256"
@@ -34,7 +29,13 @@ checksum="$artifact.sha256"
 rm -f "$artifact" "$checksum"
 sbt test assembly
 
-assembly_path="$(sbt --error 'print assembly / assemblyOutputPath' | tail -n 1)"
+assembly_path="$( {
+  sbt --error -Dsbt.supershell=false -Dsbt.log.noformat=true 'print assembly / assemblyOutputPath' |
+    tr -d '\r' |
+    sed $'s/\x1b\\[[0-9;?]*[a-zA-Z]//g' |
+    grep -E '\.jar$' |
+    tail -n 1
+} || true)"
 if [[ ! -f "$assembly_path" ]]; then
   echo "assembly output not found: $assembly_path" >&2
   exit 1
