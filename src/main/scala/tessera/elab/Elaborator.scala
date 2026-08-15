@@ -5,6 +5,7 @@ import tessera.parser.SimpleSyntaxParser.{ParsedDeclaration, ParsedDeclarationBo
 import tessera.parser.SimpleSyntaxParser.ParsedParam
 import tessera.parser.SimpleSyntaxParser.ParsedBind
 import tessera.parser.SimpleSyntaxParser.ParsedLet
+import tessera.parser.SimpleSyntaxParser.ParsedYield
 
 final case class ElaboratedDeclaration(name: String, declaredType: Option[Term], core: Term)
 
@@ -21,7 +22,9 @@ object Elaborator:
             Term.Let(name, Term.Sort(0), term, body)
           case ParsedBind(name, term) =>
             Term.Let(name, Term.Sort(0), term, body)
-          case _ =>
+          case ParsedYield(_) =>
+            // The parser terminates a do block at `yield`, so one can never
+            // appear among the leading statements; ignore it defensively.
             body
       }
 
@@ -33,10 +36,3 @@ object Elaborator:
         NameResolver.resolve(toCore(decl.value))
       )
     )
-
-  def elaborateAll(decls: Vector[ParsedDeclaration]): Either[String, Vector[ElaboratedDeclaration]] =
-    decls.foldLeft[Either[String, Vector[ElaboratedDeclaration]]](Right(Vector.empty)) {
-      case (Right(acc), decl) =>
-        elaborate(decl).map(elab => acc :+ elab)
-      case (left, _) => left
-    }

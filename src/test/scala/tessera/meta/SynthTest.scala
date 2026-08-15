@@ -2,8 +2,52 @@ package tessera.meta
 
 import munit.FunSuite
 import tessera.core.Term
+import tessera.kernel.{KernelDeclaration, KernelEnvironment}
 import Term.*
 class SynthTest extends FunSuite:
+
+  test("derive checks generated constants against a supplied environment") {
+    val idType = Pi("A", Sort(0), Pi("x", Var("A"), Var("A")))
+    val idBody = Lambda("A", Sort(0), Lambda("x", Var("A"), Var("x")))
+    val environment = KernelEnvironment.empty
+      .define(KernelDeclaration("id", idType, idBody))
+      .toOption
+      .get
+    val aliasSynth = Synth.pure(Constant("id"))
+
+    val checkedTerm: Term = Synth.derive(aliasSynth, Some(idType), environment) match
+      case SearchResult.Success(value, _) => value
+      case SearchResult.Failure(message, _) => fail(message)
+    assertEquals(checkedTerm, idBody: Term)
+
+    Synth.derive(aliasSynth, Some(idType)) match
+      case SearchResult.Success(term, _) => fail(s"expected a kernel rejection, got $term")
+      case SearchResult.Failure(message, _) =>
+        assert(message.contains("undefined constant: id"), message)
+  }
+
+  test("derive accepts a caller-supplied normalization budget") {
+    val redex = Synth.pure(App(Lambda("x", Sort(0), Var("x")), Sort(0)))
+
+    Synth.derive(redex, None, KernelEnvironment.empty, 0) match
+      case SearchResult.Failure(message, _) => assert(message.contains("budget"), message)
+      case SearchResult.Success(term, _) => fail(s"expected budget failure, got $term")
+
+    val normalized: Term = Synth.derive(redex, None) match
+      case SearchResult.Success(value, _) => value
+      case SearchResult.Failure(message, _) => fail(message)
+    assertEquals(normalized, Sort(0): Term)
+  }
+
+  test("derive without an expected type reports budget exhaustion on divergence") {
+    val omega = Lambda("x", Sort(0), App(Var("x"), Var("x")))
+    val diverging = Synth.pure(App(omega, omega))
+
+    Synth.derive(diverging, None) match
+      case SearchResult.Success(term, _) => fail(s"expected budget exhaustion, got $term")
+      case SearchResult.Failure(message, _) =>
+        assert(message.contains("normalization budget exhausted"), message)
+  }
 
   test("Synth combinators build an explicit lambda-style term and kernel-check it") {
     val explicitSynth =

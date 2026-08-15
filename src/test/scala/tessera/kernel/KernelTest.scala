@@ -72,12 +72,11 @@ class KernelTest extends FunSuite:
         fail(s"unexpected error: $other")
   }
 
-  test("kernel reports mismatch when a hole annotation conflicts with expected type") {
+  test("kernel rejects a hole even when its annotation conflicts with the expected type") {
     val term = Hole("goal", Some(Sort(1)))
     val report = kernel.check(term, Sort(0))
     assert(!report.isOk)
-    assertEquals(report.errors.size, 1)
-    assert(report.errors.head.isInstanceOf[KernelError.NotTypeMismatch])
+    assertEquals(report.errors, Vector(KernelError.UnresolvedHole("goal", Some(Sort(1)))))
   }
 
   test("constant is a stable structural leaf") {
@@ -133,27 +132,55 @@ class KernelTest extends FunSuite:
     )
   }
 
-  test("kernel normalization terminates on a manually cyclic environment") {
+  test("delta-equality distinguishes unrelated constants and reports unfolded types") {
     val environment = environmentOf(
-      KernelDeclaration("a", Sort(0), Constant("b")),
-      KernelDeclaration("b", Sort(0), Constant("a"))
+      KernelDeclaration("id", idType, idBody),
+      KernelDeclaration("IdType", Sort(0), idType)
     )
+    val withEnvironment = Kernel(environment)
 
-    assertEquals(Kernel(environment).normalize(Constant("a")), Constant("a"))
+    assert(!withEnvironment.isDefEq(Constant("id"), Constant("IdType")))
+    assertEquals(
+      withEnvironment.check(Sort(0), Constant("IdType")).errors.map(_.message),
+      Vector("type mismatch: expected (A: Type[0]) -> (x: A) -> A, found Type[0]")
+    )
   }
 
-  test("kernel normalization preserves its cycle guard across beta reduction") {
-    val recursiveBody = Lambda(
-      "x",
-      Sort(0),
-      App(Constant("f"), Var("x"))
+  test("context types are validated by the public check overload") {
+    assertEquals(
+      Kernel().check(Var("x"), Sort(0), Vector("x" -> Constant("missing"))).errors,
+      Vector(KernelError.UndefinedConstant("missing"))
     )
-    val environment = environmentOf(
-      KernelDeclaration("f", Pi("x", Sort(0), Sort(0)), recursiveBody)
-    )
-    val application = App(Constant("f"), UnitLit())
+  }
 
-    assertEquals(Kernel(environment).normalize(application), application)
+  test("environment rejects forward references so cycles cannot be built") {
+    val forward = KernelEnvironment.empty
+      .define(KernelDeclaration("a", Sort(0), Constant("b")))
+
+    assertEquals(
+      forward,
+      Left(KernelEnvironmentError.UndefinedReference("a", "b"))
+    )
+  }
+
+  test("environment rejects self-referencing definitions") {
+    val recursiveBody = Lambda("x", Sort(0), App(Constant("f"), Var("x")))
+    val selfReference = KernelEnvironment.empty
+      .define(KernelDeclaration("f", Pi("x", Sort(0), Sort(0)), recursiveBody))
+
+    assertEquals(
+      selfReference,
+      Left(KernelEnvironmentError.UndefinedReference("f", "f"))
+    )
+  }
+
+  test("repeated non-recursive constants still unfold on a single reduction path") {
+    val environment = environmentOf(
+      KernelDeclaration("f", Pi("x", Sort(0), Sort(0)), Lambda("x", Sort(0), Var("x")))
+    )
+    val nested = App(Constant("f"), App(Constant("f"), UnitLit()))
+
+    assertEquals(Kernel(environment).normalize(nested), UnitLit())
   }
 
   test("kernel infers a dependent Pi using its named binder") {

@@ -8,6 +8,13 @@ fi
 
 tag="$1"
 main_ref="$2"
+stable_semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+
+if [[ "$tag" != v* ]] || [[ ! "${tag#v}" =~ $stable_semver ]]; then
+  echo "release tag must use stable SemVer (vX.Y.Z): $tag" >&2
+  exit 65
+fi
+
 tag_ref="refs/tags/$tag"
 
 if ! git show-ref --verify --quiet "$tag_ref"; then

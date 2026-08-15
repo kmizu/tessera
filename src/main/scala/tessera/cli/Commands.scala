@@ -32,28 +32,41 @@ object TesseraCli:
   )
 
   def main(args: Array[String]): Unit =
-    args.toList match
+    val exitCode = run(args.toList)
+    if exitCode != 0 then System.exit(exitCode)
+
+  private[cli] def run(args: List[String]): Int =
+    args match
       case Nil =>
         printUsage()
+        0
       case "check" :: file :: Nil =>
         runCheck(file)
-      case "check" :: Nil =>
+      case "check" :: _ =>
+        // Covers both a missing file and stray extra arguments, so a typo can
+        // never silently skip the check.
         println("usage: tessera check <file.tes>")
+        0
       case "eval" :: "--trace" :: file :: targetParts if targetParts.nonEmpty =>
         runEvalTrace(file, targetParts.mkString(" "))
+        0
       case "eval" :: "--trace" :: _ =>
         println("usage: tessera eval --trace <file.tes> <decl or expression>")
+        0
       case cmd :: rest if supported.contains(cmd) =>
-        if rest.isEmpty then
-          val argHint =
-            if cmd == "eval" then "<decl or expression>"
-            else "[decl]"
-          println(s"usage: tessera $cmd <file.tes> $argHint")
-        else
-          runReadOnly(cmd, rest.toVector)
+        rest match
+          case Nil =>
+            val argHint =
+              if cmd == "eval" then "<decl or expression>"
+              else "[decl]"
+            println(s"usage: tessera $cmd <file.tes> $argHint")
+            0
+          case file :: extra =>
+            runReadOnly(cmd, file, extra.toVector)
       case other :: _ =>
         println(s"unknown command: $other")
         printUsage()
+        0
 
   private def printUsage(): Unit =
     println("Usage: tessera <command> [arguments]")
@@ -68,10 +81,11 @@ object TesseraCli:
     println("  show-desugared <file.tes> [decl]")
     println("  trace-synth <file.tes> [decl]")
 
-  private def runCheck(file: String): Unit =
+  private def runCheck(file: String): Int =
     parseModule(file) match
       case Left(error) =>
         println(s"parse error: $error")
+        1
       case Right(decls) =>
         val module = ModuleChecker.check(decls)
         module.outcomes.foreach {
@@ -83,19 +97,19 @@ object TesseraCli:
           case outcome =>
             printOutcomeFailure(outcome)
         }
-        if module.hasFailures then System.exit(1)
+        if module.hasFailures then 1 else 0
 
   private def printOutcomeFailure(outcome: DeclarationOutcome): Unit =
     println(s"${outcome.name}: FAIL")
     outcome.diagnostics.foreach(diagnostic => println(s"  ${diagnostic.message}"))
 
-  private def runReadOnly(command: String, args: Vector[String]): Unit =
-    val file = args.head
-    val declName = args.lift(1)
-    val evalTargetExpr = args.drop(1).mkString(" ")
+  private def runReadOnly(command: String, file: String, args: Vector[String]): Int =
+    val declName = args.headOption
+    val evalTargetExpr = args.mkString(" ")
     parseModule(file) match
       case Left(error) =>
         println(s"parse error: $error")
+        1
       case Right(decls) =>
         command match
           case "show-term" =>
@@ -109,14 +123,16 @@ object TesseraCli:
           case "trace-synth" =>
             showForDecl(decls, declName, renderTrace)
           case "eval" =>
-            if args.length < 2 then
+            if args.isEmpty then
               println("usage: tessera eval <file.tes> <decl or expression>")
+              0
             else
               evalTarget(ModuleChecker.check(decls), evalTargetExpr)
           case "holes" =>
             showHoles(decls, declName)
           case _ =>
             println(s"$command not implemented in this stage.")
+            0
 
   private def parseModule(path: String): Either[SimpleSyntaxParser.ParseError, Vector[SimpleSyntaxParser.ParsedDeclaration]] =
     SimpleSyntaxParser.parseFile(path)
@@ -125,38 +141,64 @@ object TesseraCli:
     declarations: Vector[SimpleSyntaxParser.ParsedDeclaration],
     declNameOpt: Option[String],
     render: SimpleSyntaxParser.ParsedDeclaration => String
-  ): Unit =
+  ): Int =
     declNameOpt match
       case None =>
         if declarations.size == 1 then
           println(render(declarations.head))
         else
           declarations.foreach(decl => println(s"${decl.name}: ${render(decl)}"))
+        0
       case Some(target) =>
         declarations.find(_.name == target) match
           case None =>
             println(s"unknown declaration: $target")
+            1
           case Some(decl) =>
             println(render(decl))
+            0
 
-  private def evalTarget(module: CheckedModule, target: String): Unit =
+  private def evalTarget(module: CheckedModule, target: String): Int =
     val kernel = Kernel(module.environment)
     module.find(target) match
       case Some(outcome) if outcome.status == DeclarationStatus.Rejected =>
         printOutcomeFailure(outcome)
+        1
       case Some(outcome) =>
-        println(renderTerm(kernel.normalize(outcome.core.get)))
+        outcome.core match
+          case Some(core) if outcome.status == DeclarationStatus.Accepted =>
+            println(renderTerm(kernel.normalize(core)))
+            0
+          case Some(core) =>
+            println(renderUnchecked(kernel, core))
+            0
+          case None =>
+            printOutcomeFailure(outcome)
+            1
       case None =>
         SimpleSyntaxParser.parseTermFromSource(target) match
           case Left(error) =>
             println(s"unknown declaration or parse error: $error")
+            1
           case Right(parsed) =>
             val term = NameResolver.resolve(parsed)
             kernel.infer(term) match
-              case Right(_) | Left(KernelError.CannotInferLambda(_)) =>
+              case Right(_) =>
                 println(renderTerm(kernel.normalize(term)))
+                0
+              case Left(KernelError.CannotInferLambda(_)) =>
+                println(renderUnchecked(kernel, term))
+                0
               case Left(error) =>
                 println(s"unknown declaration or evaluation error: ${error.message}")
+                1
+
+  // Terms the kernel did not certify are normalized under a step budget so a
+  // diverging term cannot crash the CLI.
+  private def renderUnchecked(kernel: Kernel, term: Term): String =
+    kernel.normalizeWithBudget(term) match
+      case Some(normalized) => renderTerm(normalized)
+      case None => "<normalization budget exhausted>"
 
   private def evalTraceHeader(file: String, target: String): Vector[String] =
     Vector("eval trace:", s"  file: $file", s"  target: $target")
@@ -173,13 +215,13 @@ object TesseraCli:
         Vector(
           s"  inferred: ${renderTerm(inferred)}",
           "  kernel: inference only",
-          s"  normalized (unchecked): ${renderTerm(kernel.normalize(term))}"
+          s"  normalized (unchecked): ${renderUnchecked(kernel, term)}"
         )
       case Left(error @ KernelError.CannotInferLambda(_)) =>
         Vector(
           s"  inferred: unavailable: ${error.message}",
           "  kernel: not checked",
-          s"  normalized (unchecked): ${renderTerm(kernel.normalize(term))}"
+          s"  normalized (unchecked): ${renderUnchecked(kernel, term)}"
         )
       case Left(error) =>
         Vector(s"  inferred: unavailable: ${error.message}", "  kernel: FAIL")
@@ -235,11 +277,14 @@ object TesseraCli:
                   s"  normalized: ${renderTerm(kernel.normalize(core))}"
                 )
               case None =>
+                val inferredLine = outcome.inferredType match
+                  case Some(inferred) => s"  inferred: ${renderTerm(inferred)}"
+                  case None => "  inferred: <unavailable>"
                 withCore ++ Vector(
                   "  expected: <none>",
-                  s"  inferred: ${renderTerm(outcome.inferredType.get)}",
+                  inferredLine,
                   "  kernel: inference only",
-                  s"  normalized (unchecked): ${renderTerm(kernel.normalize(core))}"
+                  s"  normalized (unchecked): ${renderUnchecked(kernel, core)}"
                 )
           case DeclarationStatus.Unchecked =>
             val detail = outcome.diagnostics.map(_.message).mkString("; ")
@@ -247,7 +292,7 @@ object TesseraCli:
               "  expected: <none>",
               s"  inferred: unavailable: $detail",
               "  kernel: not checked",
-              s"  normalized (unchecked): ${renderTerm(kernel.normalize(core))}"
+              s"  normalized (unchecked): ${renderUnchecked(kernel, core)}"
             )
           case DeclarationStatus.Rejected =>
             val expected = outcome.declaredType
@@ -295,12 +340,12 @@ desugared:
       case ParsedParam(name, expectedType) => s"  param $name : ${renderTerm(expectedType)}"
       case ParsedLet(name, term) => s"  let $name = ${renderTerm(term)}"
       case ParsedBind(name, term) => s"  $name <- ${renderTerm(term)}"
-      case other => ""
+      case SimpleSyntaxParser.ParsedYield(term) => s"  yield ${renderTerm(term)}"
     }
     val yieldLine = s"  yield ${renderTerm(synth.yieldTerm)}"
     s"synth do {\n${(statements :+ yieldLine).mkString("\n")}\n}"
 
-  private def showHoles(declarations: Vector[SimpleSyntaxParser.ParsedDeclaration], declNameOpt: Option[String]): Unit =
+  private def showHoles(declarations: Vector[SimpleSyntaxParser.ParsedDeclaration], declNameOpt: Option[String]): Int =
     val elaborated = declarations.map { decl =>
       decl -> TermAnalysis.collectHoles(Elaborator.toCore(decl.value))
     }
@@ -318,11 +363,13 @@ desugared:
         }
         if elaborated.forall(_._2.isEmpty) then
           println("no unresolved holes")
+        0
 
       case Some(target) =>
         elaborated.find(_._1.name == target) match
           case None =>
             println(s"unknown declaration: $target")
+            1
           case Some((_, holes)) =>
             if holes.isEmpty then
               println("no unresolved holes")
@@ -330,3 +377,4 @@ desugared:
               holes.foreach { hole =>
                 println(renderTerm(Term.Hole(hole.name, hole.expectedType)))
               }
+            0

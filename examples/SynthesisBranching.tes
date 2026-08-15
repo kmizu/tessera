@@ -3,7 +3,7 @@
 // keeps an explicit placeholder alongside a `synth do` equivalent that
 // is already supported.
 
-def andIntroBranch : (Sort 0) = synth do {
+def andIntroBranch : (Pi A (Sort 0) (Pi B (Sort 0) (Sort 0))) = synth do {
   param A : (Sort 0)
   param B : (Sort 0)
   yield (Ctor Pair (Var A) (Var B))

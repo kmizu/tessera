@@ -6,6 +6,9 @@ import tessera.parser.SimpleSyntaxParser
 import Term.*
 
 class ElaboratorTest extends FunSuite:
+  private def rightOrFail[L, R](result: Either[L, R]): R =
+    result.fold(error => fail(s"expected Right, got Left($error)"), identity)
+
   test("elaborator desugars synth do as nested lambdas") {
     val source =
       """
@@ -16,9 +19,9 @@ class ElaboratorTest extends FunSuite:
       }
       """
 
-    val Right(decls) = SimpleSyntaxParser.parseModule(source)
+    val decls = rightOrFail(SimpleSyntaxParser.parseModule(source))
     val decl = decls.head
-    val Right(elab) = Elaborator.elaborate(decl)
+    val elab = rightOrFail(Elaborator.elaborate(decl))
 
     assertEquals(
       elab.core,
@@ -41,9 +44,9 @@ class ElaboratorTest extends FunSuite:
       }
       """
 
-    val Right(decls) = SimpleSyntaxParser.parseModule(source)
+    val decls = rightOrFail(SimpleSyntaxParser.parseModule(source))
     val decl = decls.head
-    val Right(elab) = Elaborator.elaborate(decl)
+    val elab = rightOrFail(Elaborator.elaborate(decl))
 
     assertEquals(
       elab.core,
@@ -66,10 +69,10 @@ class ElaboratorTest extends FunSuite:
   }
 
   test("elaborator resolves declaration types and bodies") {
-    val Right(declarations) = SimpleSyntaxParser.parseModule(
-      "def alias : ExistingType = existingValue"
+    val declarations = rightOrFail(
+      SimpleSyntaxParser.parseModule("def alias : ExistingType = existingValue")
     )
-    val Right(elaborated) = Elaborator.elaborate(declarations.head)
+    val elaborated = rightOrFail(Elaborator.elaborate(declarations.head))
 
     assertEquals(elaborated.declaredType, Some(Constant("ExistingType")))
     assertEquals(elaborated.core, Constant("existingValue"))
